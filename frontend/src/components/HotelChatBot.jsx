@@ -1,18 +1,38 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import ChatBot from 'react-chatbotify';
 
 export default function HotelChatBot({ requestId, role = 'guest', userName, status }) {
+  // Helper functions to get dynamic messages
+  const getStatusMessage = () => {
+    if (!requestId) {
+      return "No active ride request found. Please submit a request first.";
+    }
+    const statusMessages = {
+      pending: "⏳ Your ride request is pending. Our driver will accept it shortly!",
+      accepted: "✅ Your ride has been accepted! The driver is on the way.",
+      picked_up: "🎉 Great! You've been picked up. Enjoy your ride to the hotel!",
+      completed: "🏁 Your ride is completed. Thank you for using our service!"
+    };
+    return statusMessages[status] || "Your request is being processed.";
+  };
+
+  const getDriverInfoMessage = () => {
+    if (status === 'accepted' || status === 'picked_up') {
+      return "🚐 Your driver is currently en route to your location. You can track their location on the live map.\n\nIf you need to contact them, use the call button or chat feature.";
+    }
+    return "⏳ Your driver will be assigned once your request is accepted. You'll be notified immediately!";
+  };
+
   // Conversation flow for the chatbot
   const getFlow = () => {
     if (role === 'driver') {
-      return {
       return {
         start: {
           message: `Welcome, Driver! 🚐\n\nHow can I help you manage your rides today?`,
           path: "driver_options"
         },
         driver_options: {
-          message: "Choose an option:",
+          message: "Choose an option below:",
           options: [
             {
               label: "📋 View Active Requests",
@@ -46,15 +66,13 @@ export default function HotelChatBot({ requestId, role = 'guest', userName, stat
       };
     }
 
-    }
-
     return {
       start: {
         message: `Welcome to Super 8 Bedford DFW West Shuttle Service! 🚐\n\nHow can I assist you today?`,
         path: "options"
       },
       options: {
-        message: "Choose an option:",
+        message: "Please choose an option below:",
         options: [
           {
             label: "📍 Check My Ride Status",
@@ -79,18 +97,7 @@ export default function HotelChatBot({ requestId, role = 'guest', userName, stat
         ]
       },
       status_check: {
-        message: () => {
-          if (!requestId) {
-            return "No active ride request found. Please submit a request first.";
-          }
-          const statusMessages = {
-            pending: "⏳ Your ride request is pending. Our driver will accept it shortly!",
-            accepted: "✅ Your ride has been accepted! The driver is on the way.",
-            picked_up: "🎉 Great! You've been picked up. Enjoy your ride to the hotel!",
-            completed: "🏁 Your ride is completed. Thank you for using our service!"
-          };
-          return statusMessages[status] || "Your request is being processed.";
-        },
+        message: getStatusMessage(),
         path: "options"
       },
       eta_info: {
@@ -98,9 +105,7 @@ export default function HotelChatBot({ requestId, role = 'guest', userName, stat
         path: "options"
       },
       driver_info: {
-        message: status === 'accepted' || status === 'picked_up' 
-          ? "🚐 Your driver is currently en route to your location. You can track their location on the live map.\n\nIf you need to contact them, use the call button or chat feature."
-          : "⏳ Your driver will be assigned once your request is accepted. You'll be notified immediately!",
+        message: getDriverInfoMessage(),
         path: "options"
       },
       help: {
@@ -120,7 +125,7 @@ export default function HotelChatBot({ requestId, role = 'guest', userName, stat
       fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif",
       showHeader: true,
       showFooter: false,
-      showInputRow: true,
+      showInputRow: false,
       embedded: false,
       flowStartTrigger: "ON_LOAD"
     },
@@ -138,10 +143,11 @@ export default function HotelChatBot({ requestId, role = 'guest', userName, stat
       showMessagePrompt: true
     },
     chatInput: {
-      enabledPlaceholderText: "Ask me anything...",
-      disabledPlaceholderText: "Chat unavailable",
+      enabledPlaceholderText: "Please select an option above...",
+      disabledPlaceholderText: "Please use the buttons above",
       botDelay: 800,
-      blockSpam: true
+      blockSpam: true,
+      disabled: true
     },
     tooltip: {
       mode: "CLOSE",

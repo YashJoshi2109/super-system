@@ -30,6 +30,44 @@ const statusChangeSchema = z.object({
   status: z.enum(['pending', 'accepted', 'picked_up', 'completed'])
 });
 
+// Rate limiting for Socket.IO connections
+const socketRateLimiter = new Map(); // socket_id -> { count, resetTime }
+
+function checkSocketRateLimit(socketId, maxRequests = 100, windowMs = 60000) {
+  const now = Date.now();
+  const limit = socketRateLimiter.get(socketId);
+  
+  if (!limit || now > limit.resetTime) {
+    socketRateLimiter.set(socketId, { count: 1, resetTime: now + windowMs });
+    return true;
+  }
+  
+  if (limit.count >= maxRequests) {
+    return false; // Rate limit exceeded
+  }
+  
+  limit.count++;
+  return true;
+}
+
+// Input sanitization helper
+function sanitizeInput(input) {
+  if (typeof input === 'string') {
+    return input
+      .trim()
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '') // Remove script tags
+      .replace(/[<>]/g, ''); // Remove HTML brackets
+  }
+  if (typeof input === 'object' && input !== null) {
+    const sanitized = {};
+    for (const [key, value] of Object.entries(input)) {
+      sanitized[sanitizeInput(key)] = sanitizeInput(value);
+    }
+    return sanitized;
+  }
+  return input;
+}
+
 export function initSockets(io) {
   let driverLocation = null;
   const activeRequests = new Map(); // request_id -> request payload
@@ -38,27 +76,62 @@ export function initSockets(io) {
   const mapsApiKey = process.env.MAPTILER_KEY || process.env.MAPS_API_KEY || process.env.VITE_MAPTILER_KEY;
   const flightApiKey = process.env.FLIGHT_API_KEY;
 
-  // Periodic ETA updates (every 30 seconds)
+  // Periodic ETA updates (every 30 seconds) - Optimized for 100+ users
   setInterval(async () => {
     if (!driverLocation || !mapsApiKey) return;
-    for (const [reqId, req] of activeRequests.entries()) {
+    // Limit concurrent ETA calculations to prevent overload
+    const activeRequestsArray = Array.from(activeRequests.entries()).slice(0, 50); // Process max 50 at a time
+    for (const [reqId, req] of activeRequestsArray) {
       if (req.coordinates && driverLocation && ['pending', 'accepted'].includes(req.status)) {
-        const eta = await calculateETA(driverLocation, req.coordinates, mapsApiKey);
-        if (eta) {
-          etas.set(reqId, { ...eta, lastUpdated: new Date().toISOString() });
-          io.to(`request_${reqId}`).emit('eta_update', { request_id: reqId, ...eta });
+        try {
+          const eta = await calculateETA(driverLocation, req.coordinates, mapsApiKey);
+          if (eta) {
+            etas.set(reqId, { ...eta, lastUpdated: new Date().toISOString() });
+            io.to(`request_${reqId}`).emit('eta_update', { request_id: reqId, ...eta });
+          }
+        } catch (err) {
+          console.error(`ETA calculation error for request ${reqId}:`, err.message);
         }
       }
     }
   }, 30000);
 
+  // Clean up rate limiter periodically
+  setInterval(() => {
+    const now = Date.now();
+    for (const [socketId, limit] of socketRateLimiter.entries()) {
+      if (now > limit.resetTime) {
+        socketRateLimiter.delete(socketId);
+      }
+    }
+  }, 60000); // Clean every minute
+
   io.on('connection', (socket) => {
     console.log('Socket connected:', socket.id);
+    
+    // Rate limiting check
+    if (!checkSocketRateLimit(socket.id)) {
+      console.warn(`Rate limit exceeded for socket ${socket.id}`);
+      socket.emit('error', { message: 'Rate limit exceeded. Please slow down.' });
+      socket.disconnect(true);
+      return;
+    }
 
     socket.on('join_request', async (payload) => {
-      const parse = joinRequestSchema.safeParse(payload);
+      // Rate limiting per socket
+      if (!checkSocketRateLimit(socket.id, 10, 60000)) { // 10 requests per minute
+        socket.emit('request_error', { message: 'Too many requests. Please wait a moment.', detail: 'rate_limit' });
+        return;
+      }
+
+      // Sanitize input to prevent XSS
+      const sanitizedPayload = sanitizeInput(payload);
+      
+      // Validate with Zod schema
+      const parse = joinRequestSchema.safeParse(sanitizedPayload);
       if (!parse.success) {
-        socket.emit('request_error', { message: 'Invalid request', issues: parse.error.issues });
+        console.warn(`Invalid request from socket ${socket.id}:`, parse.error.issues);
+        socket.emit('request_error', { message: 'Invalid request data', issues: parse.error.issues });
         return;
       }
 
@@ -149,6 +222,23 @@ export function initSockets(io) {
     });
 
     socket.on('update_driver_location', async (coords) => {
+      // Rate limiting for location updates
+      if (!checkSocketRateLimit(socket.id, 60, 60000)) { // 60 updates per minute
+        return; // Silently ignore excessive updates
+      }
+
+      // Validate coordinates
+      if (!coords || typeof coords.lat !== 'number' || typeof coords.lng !== 'number') {
+        socket.emit('error', { message: 'Invalid coordinates' });
+        return;
+      }
+
+      // Validate coordinate ranges (prevent invalid GPS data)
+      if (coords.lat < -90 || coords.lat > 90 || coords.lng < -180 || coords.lng > 180) {
+        socket.emit('error', { message: 'Coordinates out of valid range' });
+        return;
+      }
+
       driverLocation = coords;
       io.emit('driver_moved', driverLocation);
 
@@ -181,11 +271,41 @@ export function initSockets(io) {
     });
 
     socket.on('send_message', (msgData) => {
-      const { request_id, from, role, text } = msgData || {};
-      if (request_id && from && text) {
-        const message = { ...msgData, ts: new Date().toISOString(), id: randomUUID() };
-        io.to(`chat_${request_id}`).emit('receive_message', message);
+      // Rate limiting for messages
+      if (!checkSocketRateLimit(socket.id, 30, 60000)) { // 30 messages per minute
+        socket.emit('error', { message: 'Message rate limit exceeded. Please slow down.' });
+        return;
       }
+
+      // Sanitize message data
+      const sanitized = sanitizeInput(msgData);
+      const { request_id, from, role, text } = sanitized || {};
+      
+      // Validate message
+      if (!request_id || !from || !text || typeof text !== 'string') {
+        socket.emit('error', { message: 'Invalid message data' });
+        return;
+      }
+
+      // Prevent message spam (max 500 characters)
+      if (text.length > 500) {
+        socket.emit('error', { message: 'Message too long. Maximum 500 characters.' });
+        return;
+      }
+
+      // Validate role
+      if (!['guest', 'driver', 'admin'].includes(role)) {
+        socket.emit('error', { message: 'Invalid role' });
+        return;
+      }
+
+      const message = { 
+        ...sanitized, 
+        text: text.substring(0, 500), // Ensure max length
+        ts: new Date().toISOString(), 
+        id: randomUUID() 
+      };
+      io.to(`chat_${request_id}`).emit('receive_message', message);
     });
 
     socket.on('driver_arrived', async (data) => {
@@ -299,6 +419,37 @@ export function initSockets(io) {
         }
       } else if (etas.has(request_id)) {
         socket.emit('eta_update', { request_id, ...etas.get(request_id) });
+      }
+    });
+
+    socket.on('vacate_seats', async (data) => {
+      const { request_id } = data || {};
+      if (!request_id) {
+        socket.emit('error', { message: 'Request ID required' });
+        return;
+      }
+
+      const req = activeRequests.get(request_id);
+      if (req && req.selected_seats && req.selected_seats.length > 0) {
+        // Free up seats for this request
+        req.selected_seats.forEach(seat => {
+          if (bookedSeats.get(seat) === req.id) {
+            bookedSeats.delete(seat);
+          }
+        });
+        
+        // Broadcast updated seat availability
+        const pendingSeats = Array.from(activeRequests.values())
+          .filter(r => r.status === 'pending' && r.selected_seats && r.id !== req.id)
+          .flatMap(r => r.selected_seats);
+        io.emit('seat_availability', { 
+          booked: Array.from(bookedSeats.keys()), 
+          pending: pendingSeats 
+        });
+        
+        socket.emit('vacate_seats_success', { request_id, message: 'Seats vacated successfully' });
+      } else {
+        socket.emit('error', { message: 'Request not found or no seats to vacate' });
       }
     });
 

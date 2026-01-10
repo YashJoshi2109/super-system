@@ -63,9 +63,9 @@ export default function LiveMap({ driver, guests = [], showRoute = false, fromHo
           'line-cap': 'round'
         },
         paint: {
-          'line-color': '#3b82f6',
-          'line-width': 4,
-          'line-opacity': 0.75
+          'line-color': '#f97316', // Orange route color
+          'line-width': 6, // Thicker orange line for visibility
+          'line-opacity': 0.9
         }
       });
     };
@@ -108,14 +108,38 @@ export default function LiveMap({ driver, guests = [], showRoute = false, fromHo
         hotelMarker.current = null;
       }
 
-      // Driver marker
+      // Driver marker - Shuttle icon appears on the route (like Uber car icon)
+      // The driver pin shows the shuttle's current position along the route from guest to hotel
       if (driver) {
         if (!driverMarker.current) {
-          driverMarker.current = new maplibregl.Marker({ element: createMarkerEl('Shuttle', '#67e8f9', '🚐') })
+          // Create a larger, more prominent shuttle marker
+          const shuttleEl = document.createElement('div');
+          shuttleEl.className = 'map-marker-shuttle';
+          shuttleEl.style.width = '40px';
+          shuttleEl.style.height = '40px';
+          shuttleEl.style.borderRadius = '50%';
+          shuttleEl.style.backgroundColor = '#67e8f9';
+          shuttleEl.style.display = 'flex';
+          shuttleEl.style.alignItems = 'center';
+          shuttleEl.style.justifyContent = 'center';
+          shuttleEl.style.boxShadow = '0 4px 12px rgba(103, 232, 249, 0.5), 0 0 0 3px rgba(103, 232, 249, 0.3)';
+          shuttleEl.style.fontSize = '20px';
+          shuttleEl.style.border = '3px solid white';
+          shuttleEl.style.animation = 'pulse 2s infinite';
+          shuttleEl.textContent = '🚐';
+          shuttleEl.title = 'Shuttle - Live Location';
+
+          driverMarker.current = new maplibregl.Marker({ 
+            element: shuttleEl,
+            anchor: 'center'
+          })
             .setLngLat([driver.lng, driver.lat])
-            .setPopup(new maplibregl.Popup({ offset: 12 }).setText('Shuttle Location'))
+            .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(
+              '<div style="font-weight: bold; color: #67e8f9; font-size: 14px;">🚐 Super 8 Shuttle</div><div style="font-size: 11px; color: #666; margin-top: 4px;">Live tracking active</div>'
+            ))
             .addTo(mapInstance.current);
         } else {
+          // Smoothly animate marker to new position
           driverMarker.current.setLngLat([driver.lng, driver.lat]);
         }
       }
@@ -138,13 +162,16 @@ export default function LiveMap({ driver, guests = [], showRoute = false, fromHo
           let fromCoords, toCoords;
           
           if (fromHotel || alwaysShowHotel) {
-            // Guest view: Always show route from hotel (Super 8) to guest location
+            // Guest view: Show orange route from guest's current location TO hotel
+            // When driver is accepted, show driver location on the route
             if (guests.length > 0) {
-              fromCoords = HOTEL_COORDS;
-              toCoords = guests[0];
+              // Route: Guest Location → Hotel (orange route line)
+              fromCoords = guests[0];  // Guest location (pickup point)
+              toCoords = HOTEL_COORDS; // Hotel location (final destination)
+              // Driver pin (🚐) shows the shuttle's current location on/near the route
             }
           } else {
-            // Driver view: Route from driver current location to guest
+            // Driver view: Orange route from driver current location to guest
             if (driver && guests.length > 0) {
               fromCoords = driver;
               toCoords = guests[0];

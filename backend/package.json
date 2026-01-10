@@ -1,6 +1,6 @@
 {
   "name": "hotel-micro-logistics-backend",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "src/server.js",
@@ -8,19 +8,33 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "migrate": "node scripts/migrate.js",
-    "lint": "echo \"add a linter (eslint) if desired\" && exit 0"
+    "health": "node scripts/health-check.js",
+    "lint": "echo \"add a linter (eslint) if desired\" && exit 0",
+    "test": "echo \"add tests\" && exit 0",
+    "audit": "npm audit --production",
+    "audit:fix": "npm audit fix --production",
+    "start:prod": "NODE_ENV=production node src/server.js"
   },
   "dependencies": {
+    "compression": "^1.7.5",
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "express": "^4.19.2",
-    "pg": "^8.11.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0",
+    "node-fetch": "^2.7.0",
+    "pg": "^8.13.1",
     "redis": "^4.7.1",
-    "socket.io": "^4.7.5",
-    "uuid": "^9.0.1",
-    "zod": "^3.22.4"
+    "socket.io": "^4.8.1",
+    "uuid": "^11.0.3",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   }
 }

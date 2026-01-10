@@ -15,6 +15,17 @@
   }
 }
 
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 4px 12px rgba(103, 232, 249, 0.5), 0 0 0 3px rgba(103, 232, 249, 0.3);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 4px 16px rgba(103, 232, 249, 0.7), 0 0 0 5px rgba(103, 232, 249, 0.5);
+  }
+}
+
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }
@@ -45,22 +56,165 @@
   z-index: 9999 !important;
 }
 
-/* Mobile-specific fixes */
-@media (max-width: 640px) {
-  /* Better touch targets */
-  button, a, input, select {
-    min-height: 44px;
+/* Mobile-specific fixes - Optimized for 98% mobile users */
+@media (max-width: 768px) {
+  /* Better touch targets - iOS/Android recommended minimum 48px */
+  button, 
+  a[href],
+  .touch-target {
+    min-height: 48px !important;
+    min-width: 48px !important;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(99, 102, 241, 0.3);
+  }
+  
+  /* Input fields - prevent iOS zoom and ensure proper sizing */
+  input[type="text"],
+  input[type="tel"],
+  input[type="number"],
+  input[type="email"],
+  select,
+  textarea {
+    font-size: 16px !important; /* Prevents iOS zoom on focus */
+    min-height: 48px !important;
+    padding: 14px 16px !important;
+    border-radius: 12px !important;
+    border-width: 2px !important;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
     touch-action: manipulation;
   }
   
-  /* Prevent text size adjustment on iOS */
-  input, select, textarea {
-    font-size: 16px !important;
+  /* Inputs with icons - ensure proper spacing on mobile to prevent placeholder overlap */
+  input[class*="pl-14"],
+  select[class*="pl-14"] {
+    padding-left: 56px !important; /* Icon (20px at left-4) + gap (12px) + padding (16px) + extra (8px safety) = 56px total */
   }
   
-  /* Better scrolling */
-  .overflow-y-auto {
+  /* Desktop spacing is fine with pl-12 (48px) - no override needed */
+  
+  /* Placeholder text - ensure proper sizing and no overlap on mobile */
+  input::placeholder,
+  select::placeholder {
+    font-size: 16px !important; /* Match input font size on mobile to prevent zoom */
+    color: rgb(148 163 184) !important; /* slate-400 */
+    opacity: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: block;
+    line-height: 1.5;
+  }
+  
+  /* Ensure icon container doesn't overlap with text */
+  .relative > .absolute {
+    left: 16px !important; /* Consistent icon positioning on mobile (4 * 4px = 16px) */
+  }
+  
+  /* Icon spacing - ensure icons don't overlap with placeholder text */
+  .relative .absolute img {
+    margin-right: 0; /* No margin needed, handled by padding */
+  }
+  
+  /* Better scrolling with momentum for all scrollable areas */
+  .overflow-y-auto,
+  .overflow-auto,
+  body,
+  html,
+  [class*="overflow"] {
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    scroll-behavior: smooth;
+  }
+  
+  /* Better spacing for mobile forms and cards */
+  form {
+    gap: 16px !important;
+  }
+  
+  form > * + * {
+    margin-top: 16px !important;
+  }
+  
+  /* Improve toggle button size for mobile - easier to tap */
+  button[type="button"].toggle,
+  [role="switch"],
+  button[type="button"]:has(> span.absolute.rounded-full) {
+    min-width: 56px !important;
+    min-height: 32px !important;
+    height: 32px !important;
+  }
+  
+  /* Larger toggle thumb for better touch target */
+  button[type="button"] > span.absolute.rounded-full {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+  }
+  
+  /* Better focus states for mobile - visible and accessible */
+  input:focus,
+  select:focus,
+  textarea:focus,
+  button:focus-visible {
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.4) !important;
+    border-color: rgb(99, 102, 241) !important;
+  }
+  
+  /* Card spacing improvements */
+  .space-y-4 > * + *,
+  .space-y-3 > * + * {
+    margin-top: 16px !important;
+  }
+  
+  /* Better button spacing in grids */
+  .grid button,
+  .grid .touch-target {
+    width: 100% !important;
+  }
+  
+  /* Improve text readability on mobile */
+  body {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    font-size: 16px;
+  }
+  
+  /* Better spacing for cards on mobile */
+  [class*="Card"],
+  .rounded-xl,
+  .rounded-2xl {
+    padding: 1rem !important;
+  }
+  
+  /* Map container height adjustments for mobile - Guest Panel */
+  [style*="height: 450px"],
+  [style*="height: 400px"],
+  [style*="height: 350px"] {
+    height: 320px !important;
+    min-height: 320px !important;
+  }
+  
+  /* Guest Panel specific mobile optimizations */
+  .space-y-4 > * + * {
+    margin-top: 1rem !important;
+  }
+  
+  /* Better form field spacing on mobile */
+  form.space-y-4 > * {
+    margin-bottom: 1rem !important;
+  }
+  
+  /* Compact status cards on mobile */
+  .grid-cols-3 > * {
+    padding: 0.875rem !important;
+  }
+  
+  /* Journey timeline mobile optimization */
+  .bg-gradient-to-br {
+    padding: 0.875rem !important;
   }
 }
 
@@ -80,16 +234,162 @@
   display: none;
 }
 
-/* Better mobile form inputs */
+/* Mobile-optimized toggle switches */
+@media (max-width: 768px) {
+  /* Larger toggle switches for easier interaction - thumb-friendly */
+  button[type="button"][aria-label*="Turn"],
+  button[type="button"]:has(> span[class*="absolute"][class*="rounded-full"]) {
+    min-width: 56px !important;
+    height: 32px !important;
+    min-height: 32px !important;
+  }
+  
+  /* Larger toggle thumb for better touch target */
+  button[type="button"] > span.absolute.rounded-full {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+  }
+  
+  /* Better spacing around toggles */
+  .space-y-3 > * + * {
+    margin-top: 16px;
+  }
+}
+
+/* Better mobile grid layouts */
 @media (max-width: 640px) {
-  input[type="text"],
-  input[type="tel"],
-  input[type="number"],
-  select {
-    font-size: 16px !important; /* Prevents iOS zoom on focus */
+  .grid-cols-\[100px\,1fr\],
+  .grid-cols-\[110px\,1fr\] {
+    grid-template-columns: 1fr !important;
+    gap: 1rem !important;
+  }
+  
+  /* Stack phone code and number on mobile */
+  .sm\:grid-cols-\[110px\,1fr\] {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Additional mobile optimizations */
+@media (max-width: 640px) {
+  /* Stack all grid layouts on small mobile */
+  .grid-cols-2,
+  .grid-cols-3,
+  .grid-cols-4 {
+    grid-template-columns: 1fr !important;
+  }
+  
+  /* Better padding for very small screens */
+  .p-4, .p-5, .p-6 {
+    padding: 1rem !important;
+  }
+  
+  /* Optimize header spacing */
+  header {
+    padding: 0.75rem 1rem !important;
+  }
+  
+  /* Better gap spacing */
+  .gap-2 { gap: 0.75rem !important; }
+  .gap-3 { gap: 1rem !important; }
+  .gap-4 { gap: 1rem !important; }
+  
+  /* Full width buttons on mobile */
+  button {
+    width: 100%;
+  }
+  
+  /* Stack flex columns on mobile */
+  .flex-row {
+    flex-direction: column !important;
   }
 }
 
 body {
   font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+}
+
+/* Make GIF backgrounds transparent - Remove white backgrounds from GIF icons */
+/* Method 1: Use mix-blend-mode for dark theme */
+.dark img[src$=".gif"],
+.dark img[src*=".gif"],
+.dark img[src$=".gif"]:not(.no-blend),
+.dark img[src*=".gif"]:not(.no-blend) {
+  mix-blend-mode: screen;
+  filter: brightness(1.15) contrast(1.1);
+  background: transparent;
+}
+
+/* Method 2: For light theme, use multiply blend mode */
+:root:not(.dark) img[src$=".gif"],
+:root:not(.dark) img[src*=".gif"] {
+  mix-blend-mode: multiply;
+  filter: contrast(1.05);
+  background: transparent;
+}
+
+/* Method 3: CSS filter to remove white backgrounds (works on some browsers) */
+img[src$=".gif"]:not(.no-filter),
+img[src*=".gif"]:not(.no-filter) {
+  background: transparent !important;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+}
+
+/* Better approach for GIF transparency - Use CSS backdrop-filter */
+img[src$=".gif"],
+img[src*=".gif"] {
+  background: transparent;
+  image-rendering: auto;
+}
+
+/* Override white backgrounds specifically */
+img[src$=".gif"][style*="background"],
+img[src*=".gif"][style*="background"] {
+  background: transparent !important;
+}
+
+/* Prevent white flash on page load - Critical CSS */
+html {
+  background-color: #0f172a !important;
+}
+
+body {
+  background-color: #0f172a !important;
+  color: #f1f5f9 !important;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+#root {
+  background-color: #0f172a !important;
+  min-height: 100vh;
+}
+
+/* Theme transition - but not on initial load */
+*:not(html):not(body):not(#root) {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Light theme styles */
+:root:not(.dark) {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --border-color: #e2e8f0;
+}
+
+/* Dark theme styles (default) */
+.dark,
+html.dark {
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --border-color: #334155;
+  background-color: #0f172a !important;
 }

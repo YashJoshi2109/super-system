@@ -3,32 +3,38 @@ import React from 'react';
 const journeySteps = [
   { 
     label: 'Submitted', 
-    icon: '📝', 
+    icon: '/checklist.gif',
+    iconEmoji: '📝', 
     key: 'submitted'
   },
   { 
     label: 'Tracking', 
-    icon: '📍', 
+    icon: '/location.gif',
+    iconEmoji: '📍', 
     key: 'tracking'
   },
   { 
     label: 'Accepted', 
-    icon: '✅', 
+    icon: '/checklist.gif',
+    iconEmoji: '✅', 
     key: 'accepted'
   },
   { 
     label: 'En Route', 
-    icon: '🚐', 
+    icon: '/bus-journey.gif',
+    iconEmoji: '🚐', 
     key: 'en_route'
   },
   { 
     label: 'Picked Up', 
-    icon: '🎉', 
+    icon: '/destination.gif',
+    iconEmoji: '🎉', 
     key: 'picked_up'
   },
   { 
     label: 'Completed', 
-    icon: '🏁', 
+    icon: '/hotel.gif',
+    iconEmoji: '🏁', 
     key: 'completed'
   }
 ];
@@ -93,8 +99,8 @@ export default function HorizontalJourney({ status, hasRequestId, hasCoords }) {
                   {/* Icon Circle */}
                   <div 
                     className={`
-                      w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-xl sm:text-2xl
-                      transition-all duration-500 transform
+                      w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center
+                      transition-all duration-500 transform overflow-hidden
                       ${isDone 
                         ? 'bg-gradient-to-br from-emerald-500 to-green-600 scale-110 sm:scale-110 shadow-xl shadow-emerald-500/50 border-2 border-emerald-400' 
                         : 'bg-slate-700 scale-100 border-2 border-slate-600'
@@ -102,7 +108,19 @@ export default function HorizontalJourney({ status, hasRequestId, hasCoords }) {
                       ${isActive && !isDone ? 'ring-4 ring-emerald-400/30 animate-pulse bg-slate-600' : ''}
                     `}
                   >
-                    {isDone ? '✓' : step.icon}
+                    {isDone ? (
+                      <span className="text-white text-xl sm:text-2xl font-bold">✓</span>
+                    ) : (
+                      <img 
+                        src={step.icon} 
+                        alt={step.label} 
+                        className="w-8 h-8 sm:w-10 sm:h-10 object-contain"
+                        onError={(e) => {
+                          // Fallback to emoji if image fails to load
+                          e.target.outerHTML = `<span class="text-xl sm:text-2xl">${step.iconEmoji}</span>`;
+                        }}
+                      />
+                    )}
                   </div>
                   
                   {/* Label */}

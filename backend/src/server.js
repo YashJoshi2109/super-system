@@ -6,8 +6,55 @@ import { Server } from 'socket.io';
 import { initSockets } from './sockets/index.js';
 import { connectRedis } from './redisClient.js';
 import { listRecent } from './repositories/requestsRepo.js';
+import { pool } from './db.js';
 
 dotenv.config();
+
+// Ensure database columns exist
+async function ensureDatabaseSchema() {
+  try {
+    // Check if passenger_count column exists
+    const checkPassengerCount = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_schema = 'public' 
+      AND table_name = 'shuttle_requests' 
+      AND column_name = 'passenger_count';
+    `);
+
+    if (checkPassengerCount.rows.length === 0) {
+      console.log('Adding passenger_count column...');
+      await pool.query(`
+        ALTER TABLE shuttle_requests 
+        ADD COLUMN passenger_count INTEGER NOT NULL DEFAULT 1;
+      `);
+      console.log('✓ Added passenger_count column');
+    }
+
+    // Check if selected_seats column exists
+    const checkSelectedSeats = await pool.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_schema = 'public' 
+      AND table_name = 'shuttle_requests' 
+      AND column_name = 'selected_seats';
+    `);
+
+    if (checkSelectedSeats.rows.length === 0) {
+      console.log('Adding selected_seats column...');
+      await pool.query(`
+        ALTER TABLE shuttle_requests 
+        ADD COLUMN selected_seats JSONB;
+      `);
+      console.log('✓ Added selected_seats column');
+    }
+
+    console.log('✓ Database schema is up to date');
+  } catch (err) {
+    console.error('Error ensuring database schema:', err);
+    // Don't crash on migration errors, but log them
+  }
+}
 
 const port = process.env.PORT || 3001;
 const parsedOrigins = (process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -24,7 +71,7 @@ app.get('/health', (_req, res) => {
 app.get('/api/export/csv', async (_req, res) => {
   try {
     const requests = await listRecent(1000); // Get up to 1000 recent requests
-    const headers = ['ID', 'Guest Name', 'Phone', 'Voucher Code', 'Terminal', 'Gate', 'Status', 'Courtesy Pickup', 'Language', 'Created At'];
+    const headers = ['ID', 'Guest Name', 'Phone', 'Voucher Code', 'Terminal', 'Gate', 'Status', 'Courtesy Pickup', 'Passengers', 'Selected Seats', 'Language', 'Created At'];
     const rows = requests.map(r => [
       r.id,
       r.guest_name,
@@ -34,6 +81,8 @@ app.get('/api/export/csv', async (_req, res) => {
       r.gate_proximity || '',
       r.status,
       r.courtesy_pickup ? 'Yes' : 'No',
+      r.passenger_count || 1,
+      (r.selected_seats && Array.isArray(r.selected_seats) ? r.selected_seats.join(', ') : '') || '',
       r.language_pref || 'en',
       new Date(r.created_at).toLocaleString()
     ]);
@@ -61,6 +110,16 @@ initSockets(io);
 
 connectRedis().catch((err) => console.error('Redis connect failed', err));
 
-server.listen(port, () => {
-  console.log(`Real-time logistics server running on port ${port}`);
+// Ensure database schema is up to date before starting server
+ensureDatabaseSchema().then(() => {
+  server.listen(port, () => {
+    console.log(`Real-time logistics server running on port ${port}`);
+  });
+}).catch((err) => {
+  console.error('Failed to ensure database schema:', err);
+  // Still start server, but log the error
+  server.listen(port, () => {
+    console.log(`Real-time logistics server running on port ${port}`);
+    console.warn('⚠️  Database schema migration may have failed. Please check manually.');
+  });
 });

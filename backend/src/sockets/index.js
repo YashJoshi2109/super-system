@@ -20,6 +20,8 @@ const joinRequestSchema = z.object({
   gate_proximity: z.string().trim().min(1),
   courtesy_pickup: z.boolean().default(false),
   language_pref: optionalShortString(2, 5),
+  passenger_count: z.number().int().min(1).max(20).default(1),
+  selected_seats: z.array(z.string()).default([]),
   coordinates: z.object({ lat: z.number(), lng: z.number() })
 });
 
@@ -32,6 +34,7 @@ export function initSockets(io) {
   let driverLocation = null;
   const activeRequests = new Map(); // request_id -> request payload
   const etas = new Map(); // request_id -> { etaMinutes, distanceKm, lastUpdated }
+  const bookedSeats = new Map(); // seat_id -> request_id (when driver accepts, seats get booked)
   const mapsApiKey = process.env.MAPTILER_KEY || process.env.MAPS_API_KEY || process.env.VITE_MAPTILER_KEY;
   const flightApiKey = process.env.FLIGHT_API_KEY;
 
@@ -86,9 +89,48 @@ export function initSockets(io) {
         socket.emit('geofence_warning', { terminal: request.terminal, coords: request.coordinates });
       }
 
+      // Check for seat conflicts (if seats are already booked by accepted requests)
+      const conflictingSeats = [];
+      if (parse.data.selected_seats && parse.data.selected_seats.length > 0) {
+        for (const seat of parse.data.selected_seats) {
+          if (bookedSeats.has(seat)) {
+            conflictingSeats.push(seat);
+          }
+        }
+      }
+
+      if (conflictingSeats.length > 0) {
+        socket.emit('request_error', { 
+          message: `Seats ${conflictingSeats.join(', ')} are already booked. Please select different seats.`,
+          detail: 'seat_conflict'
+        });
+        return;
+      }
+
       activeRequests.set(request.id, request);
       socket.join(`request_${request.id}`); // Join request-specific room for chat/updates
+      
+      // Broadcast new request with seat info
       io.emit('new_ride_request', request);
+      socket.emit('request_ack', { request_id: request.id });
+      
+      // Broadcast current seat availability (pending selections from other guests)
+      const pendingSeats = Array.from(activeRequests.values())
+        .filter(r => r.status === 'pending' && r.selected_seats && r.id !== request.id)
+        .flatMap(r => r.selected_seats);
+      socket.emit('seat_availability', { 
+        booked: Array.from(bookedSeats.keys()), 
+        pending: pendingSeats 
+      });
+      
+      // Also broadcast to all so everyone gets updated availability
+      const allPendingSeats = Array.from(activeRequests.values())
+        .filter(r => r.status === 'pending' && r.selected_seats)
+        .flatMap(r => r.selected_seats);
+      io.emit('seat_availability', { 
+        booked: Array.from(bookedSeats.keys()), 
+        pending: allPendingSeats 
+      });
       socket.emit('request_ack', { request_id: request.id });
 
       try {
@@ -177,14 +219,54 @@ export function initSockets(io) {
 
       const req = activeRequests.get(parse.data.request_id);
       if (req) {
+        const oldStatus = req.status;
         req.status = parse.data.status;
         activeRequests.set(req.id, req);
+
+        // When driver accepts, book the seats permanently
+        if (parse.data.status === 'accepted' && oldStatus === 'pending') {
+          if (req.selected_seats && req.selected_seats.length > 0) {
+            // Book seats
+            req.selected_seats.forEach(seat => {
+              bookedSeats.set(seat, req.id);
+            });
+            
+            // Broadcast updated seat availability
+            const pendingSeats = Array.from(activeRequests.values())
+              .filter(r => r.status === 'pending' && r.selected_seats && r.id !== req.id)
+              .flatMap(r => r.selected_seats);
+            io.emit('seat_availability', { 
+              booked: Array.from(bookedSeats.keys()), 
+              pending: pendingSeats 
+            });
+          }
+        }
+
+        // When request is completed or cancelled, free up seats
+        if (parse.data.status === 'completed' || parse.data.status === 'cancelled') {
+          if (req.selected_seats && req.selected_seats.length > 0) {
+            req.selected_seats.forEach(seat => {
+              if (bookedSeats.get(seat) === req.id) {
+                bookedSeats.delete(seat);
+              }
+            });
+            
+            // Broadcast updated seat availability
+            const pendingSeats = Array.from(activeRequests.values())
+              .filter(r => r.status === 'pending' && r.selected_seats)
+              .flatMap(r => r.selected_seats);
+            io.emit('seat_availability', { 
+              booked: Array.from(bookedSeats.keys()), 
+              pending: pendingSeats 
+            });
+          }
+        }
 
         // Send push notifications on status changes
         if (parse.data.status === 'accepted') {
           io.to(`request_${parse.data.request_id}`).emit('push_notification', {
             type: 'accepted',
-            message: '✅ Your ride request has been accepted! Driver is on the way.',
+            message: '✅ Your ride request has been accepted! Driver is on the way. Your seats are confirmed.',
             request_id: parse.data.request_id,
             ts: new Date().toISOString()
           });

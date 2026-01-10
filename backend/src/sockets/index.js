@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { createRequest, updateStatus } from '../repositories/requestsRepo.js';
 import { withinGeofence } from '../services/geofence.js';
 import { groupNearby } from '../services/grouping.js';
+import { calculateETA } from '../services/eta.js';
+import { getFlightInfo } from '../services/flightApi.js';
+import { sendSMS } from '../services/sms.js';
 
 const emptyToUndefined = (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 const optionalShortString = (min = 1, max = 50) =>
@@ -28,6 +31,23 @@ const statusChangeSchema = z.object({
 export function initSockets(io) {
   let driverLocation = null;
   const activeRequests = new Map(); // request_id -> request payload
+  const etas = new Map(); // request_id -> { etaMinutes, distanceKm, lastUpdated }
+  const mapsApiKey = process.env.MAPTILER_KEY || process.env.MAPS_API_KEY || process.env.VITE_MAPTILER_KEY;
+  const flightApiKey = process.env.FLIGHT_API_KEY;
+
+  // Periodic ETA updates (every 30 seconds)
+  setInterval(async () => {
+    if (!driverLocation || !mapsApiKey) return;
+    for (const [reqId, req] of activeRequests.entries()) {
+      if (req.coordinates && driverLocation && ['pending', 'accepted'].includes(req.status)) {
+        const eta = await calculateETA(driverLocation, req.coordinates, mapsApiKey);
+        if (eta) {
+          etas.set(reqId, { ...eta, lastUpdated: new Date().toISOString() });
+          io.to(`request_${reqId}`).emit('eta_update', { request_id: reqId, ...eta });
+        }
+      }
+    }
+  }, 30000);
 
   io.on('connection', (socket) => {
     console.log('Socket connected:', socket.id);
@@ -39,8 +59,20 @@ export function initSockets(io) {
         return;
       }
 
+      // Flight API integration - auto-detect terminal if airline code provided
+      let detectedTerminal = parse.data.terminal;
+      let flightInfo = null;
+      if (parse.data.airline_code && flightApiKey) {
+        flightInfo = await getFlightInfo(parse.data.airline_code, flightApiKey);
+        if (flightInfo?.terminal) {
+          detectedTerminal = flightInfo.terminal;
+          socket.emit('flight_info', { ...flightInfo, suggested_terminal: detectedTerminal });
+        }
+      }
+
       const request = {
         ...parse.data,
+        terminal: detectedTerminal,
         courtesy_pickup: Boolean(parse.data.courtesy_pickup),
         language_pref: parse.data.language_pref || 'en',
         id: randomUUID(),
@@ -55,6 +87,7 @@ export function initSockets(io) {
       }
 
       activeRequests.set(request.id, request);
+      socket.join(`request_${request.id}`); // Join request-specific room for chat/updates
       io.emit('new_ride_request', request);
       socket.emit('request_ack', { request_id: request.id });
 
@@ -73,9 +106,22 @@ export function initSockets(io) {
       io.emit('grouped_requests', groupNearby([...activeRequests.values()]));
     });
 
-    socket.on('update_driver_location', (coords) => {
+    socket.on('update_driver_location', async (coords) => {
       driverLocation = coords;
       io.emit('driver_moved', driverLocation);
+
+      // Calculate ETA for all active requests
+      if (mapsApiKey) {
+        for (const [reqId, req] of activeRequests.entries()) {
+          if (req.coordinates && ['pending', 'accepted'].includes(req.status)) {
+            const eta = await calculateETA(coords, req.coordinates, mapsApiKey);
+            if (eta) {
+              etas.set(reqId, { ...eta, lastUpdated: new Date().toISOString() });
+              io.to(`request_${reqId}`).emit('eta_update', { request_id: reqId, ...eta });
+            }
+          }
+        }
+      }
     });
 
     socket.on('update_guest_location', (data) => {
@@ -84,8 +130,45 @@ export function initSockets(io) {
       io.emit('guest_moved', { request_id, coords });
     });
 
+    socket.on('join_chat', (data) => {
+      const { request_id, role, name } = data || {};
+      if (request_id) {
+        socket.join(`chat_${request_id}`);
+        socket.to(`chat_${request_id}`).emit('user_joined', { role, name, ts: new Date().toISOString() });
+      }
+    });
+
     socket.on('send_message', (msgData) => {
-      io.emit('receive_message', { ...msgData, ts: new Date().toISOString() });
+      const { request_id, from, role, text } = msgData || {};
+      if (request_id && from && text) {
+        const message = { ...msgData, ts: new Date().toISOString(), id: randomUUID() };
+        io.to(`chat_${request_id}`).emit('receive_message', message);
+      }
+    });
+
+    socket.on('driver_arrived', async (data) => {
+      const { request_id } = data || {};
+      if (request_id) {
+        const req = activeRequests.get(request_id);
+        const notificationMsg = '🚐 Your Super 8 shuttle has arrived! Please look for the van at your location.';
+        
+        // Send push notification via socket
+        io.to(`request_${request_id}`).emit('push_notification', {
+          type: 'driver_arrived',
+          message: notificationMsg,
+          request_id,
+          ts: new Date().toISOString()
+        });
+
+        // Send SMS if phone number is available
+        if (req?.phone) {
+          try {
+            await sendSMS(req.phone, notificationMsg);
+          } catch (err) {
+            console.error('SMS send error for', req.phone, err);
+          }
+        }
+      }
     });
 
     socket.on('status_change', async (data) => {
@@ -96,6 +179,23 @@ export function initSockets(io) {
       if (req) {
         req.status = parse.data.status;
         activeRequests.set(req.id, req);
+
+        // Send push notifications on status changes
+        if (parse.data.status === 'accepted') {
+          io.to(`request_${parse.data.request_id}`).emit('push_notification', {
+            type: 'accepted',
+            message: '✅ Your ride request has been accepted! Driver is on the way.',
+            request_id: parse.data.request_id,
+            ts: new Date().toISOString()
+          });
+        } else if (parse.data.status === 'picked_up') {
+          io.to(`request_${parse.data.request_id}`).emit('push_notification', {
+            type: 'picked_up',
+            message: '🎉 You\'ve been picked up! Enjoy your ride.',
+            request_id: parse.data.request_id,
+            ts: new Date().toISOString()
+          });
+        }
       }
 
       io.emit('update_status', parse.data);
@@ -107,8 +207,28 @@ export function initSockets(io) {
       }
     });
 
+    socket.on('request_eta', async (data) => {
+      const { request_id } = data || {};
+      const req = activeRequests.get(request_id);
+      if (req && driverLocation && req.coordinates && mapsApiKey) {
+        const eta = await calculateETA(driverLocation, req.coordinates, mapsApiKey);
+        if (eta) {
+          socket.emit('eta_update', { request_id, ...eta });
+        }
+      } else if (etas.has(request_id)) {
+        socket.emit('eta_update', { request_id, ...etas.get(request_id) });
+      }
+    });
+
     socket.on('disconnect', () => {
       console.log('Socket disconnected:', socket.id);
+      // Clean up: remove requests if guest disconnects
+      for (const [reqId, req] of activeRequests.entries()) {
+        if (req.socket_id === socket.id && req.status === 'pending') {
+          activeRequests.delete(reqId);
+          io.emit('grouped_requests', groupNearby([...activeRequests.values()]));
+        }
+      }
     });
   });
 }

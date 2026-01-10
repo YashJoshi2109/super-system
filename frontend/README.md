@@ -1,4 +1,4 @@
-# Hotel Micro-Logistics Frontend (No Docker)
+# Hotel Micro-Logistics Frontend
 
 Tech: React + Vite + Tailwind + Socket.io client.
 

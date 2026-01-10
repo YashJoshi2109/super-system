@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { socket } from './lib/socket.js';
 import LiveMap from './components/LiveMap.jsx';
+import ChatPanel from './components/ChatPanel.jsx';
+import NotificationToast from './components/NotificationToast.jsx';
 import { t } from './i18n.js';
 
 const roles = ['guest', 'driver', 'admin'];
@@ -20,6 +22,9 @@ export default function App() {
   const [requestError, setRequestError] = useState(null);
   const [driverLoc, setDriverLoc] = useState(null);
   const [guestLoc, setGuestLoc] = useState(null);
+  const [etas, setEtas] = useState({}); // request_id -> { etaMinutes, distanceKm }
+  const [notifications, setNotifications] = useState([]);
+  const [flightInfo, setFlightInfo] = useState(null);
 
   useEffect(() => {
     const handlers = [
@@ -40,17 +45,45 @@ export default function App() {
       ['geofence_warning', (payload) => { setGeofenceWarning(payload); pushLog(setLogs, 'Geofence warning', payload); }],
       ['grouped_requests', (payload) => setGrouped(payload || [])],
       ['request_ack', (payload) => { setRequestError(null); setRequestId(payload.request_id); pushLog(setLogs, 'Request acknowledged', payload); }],
-      ['request_error', (payload) => { setRequestError(payload?.message || 'Request failed'); pushLog(setLogs, 'Request error', payload); }]
+      ['request_error', (payload) => { setRequestError(payload?.message || 'Request failed'); pushLog(setLogs, 'Request error', payload); }],
+      ['eta_update', (payload) => {
+        if (payload.request_id) {
+          setEtas((prev) => ({ ...prev, [payload.request_id]: payload }));
+          pushLog(setLogs, 'ETA update', payload);
+        }
+      }],
+      ['push_notification', (payload) => {
+        setNotifications((prev) => [...prev, payload].slice(-10));
+        pushLog(setLogs, 'Notification', payload);
+        // Browser notification
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification(payload.message || 'Hotel Transport Update', {
+            body: payload.message,
+            icon: '/favicon.ico'
+          });
+        }
+      }],
+      ['flight_info', (payload) => {
+        setFlightInfo(payload);
+        pushLog(setLogs, 'Flight info', payload);
+      }]
     ];
     handlers.forEach(([evt, fn]) => socket.on(evt, fn));
     return () => handlers.forEach(([evt, fn]) => socket.off(evt, fn));
+  }, []);
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
   }, []);
 
   const isGuest = role === 'guest';
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur px-4 py-3 flex flex-wrap gap-3 justify-between items-center">
+      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur px-3 sm:px-4 py-2 sm:py-3 flex flex-wrap gap-2 sm:gap-3 justify-between items-center sticky top-0 z-40">
         <div className="flex items-center gap-2">
           <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-400 flex items-center justify-center font-bold text-slate-950">HT</div>
           <div>
@@ -65,7 +98,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className={`p-4 grid gap-4 ${isGuest ? '' : 'lg:grid-cols-[2fr,1fr]'}`}>
+      <main className={`p-3 sm:p-4 grid gap-4 ${isGuest ? '' : 'lg:grid-cols-[2fr,1fr]'}`}>
         <div className="space-y-4">
           {role === 'guest' && (
             <GuestPanel
@@ -78,6 +111,8 @@ export default function App() {
               requestError={requestError}
               setRequestError={setRequestError}
               statusMap={statusMap}
+              eta={etas[requestId]}
+              flightInfo={flightInfo}
             />
           )}
           {role === 'driver' && (
@@ -86,6 +121,7 @@ export default function App() {
               requests={requests}
               statusMap={statusMap}
               logs={logs.slice(-5)}
+              etas={etas}
             />
           )}
           {role === 'admin' && (
@@ -94,6 +130,7 @@ export default function App() {
               driverLoc={driverLoc}
               requests={requests}
               logs={logs}
+              etas={etas}
             />
           )}
         </div>
@@ -120,6 +157,12 @@ export default function App() {
           </aside>
         )}
       </main>
+      {notifications.length > 0 && (
+        <NotificationToast
+          notifications={notifications}
+          onDismiss={() => setNotifications([])}
+        />
+      )}
     </div>
   );
 }
@@ -171,10 +214,11 @@ function ConnectionPill({ state }) {
   );
 }
 
-function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLoc, driverLoc, requestError, setRequestError, statusMap }) {
+function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLoc, driverLoc, requestError, setRequestError, statusMap, eta, flightInfo }) {
   const [form, setForm] = useState({
     guest_name: '',
     terminal: '',
+    airline_code: '',
     voucher_code: '',
     gate_proximity: '',
     courtesy_pickup: false,
@@ -244,7 +288,8 @@ function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLo
     const payload = {
       guest_name: form.guest_name,
       phone: `${form.country_code}${phoneDigits}`,
-      terminal: (form.terminal || '').toUpperCase(),
+      airline_code: form.airline_code || undefined,
+      terminal: (flightInfo?.suggested_terminal || form.terminal || '').toUpperCase(),
       voucher_code: voucher || undefined,
       gate_proximity: gate,
       courtesy_pickup: form.courtesy_pickup,
@@ -256,9 +301,9 @@ function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLo
   };
 
   return (
-    <Card title="Guest · Request & Live Tracking" accent="from-indigo-500 to-cyan-400">
+    <Card title="👤 Guest · Request Ride" accent="from-indigo-500 to-cyan-400">
       <div className="grid gap-4 lg:grid-cols-[1.2fr,1fr]">
-        <div className="space-y-3">
+        <div className="space-y-3 order-2 lg:order-1">
           <form className="space-y-3" onSubmit={submit}>
             <Input label={t(lang, 'name')} value={form.guest_name} onChange={(v) => setForm({ ...form, guest_name: v })} required />
             <div className="grid grid-cols-[120px,1fr] gap-2">
@@ -270,9 +315,23 @@ function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLo
               />
               <Input label={t(lang, 'phone_hint')} value={form.phone_number} onChange={(v) => setForm({ ...form, phone_number: v })} required />
             </div>
+            <Input
+              label="Flight Code (e.g., AA1234) - Optional"
+              value={form.airline_code}
+              onChange={(v) => setForm({ ...form, airline_code: v.toUpperCase() })}
+              placeholder="AA1234 (optional, auto-detects terminal)"
+            />
+            {flightInfo && flightInfo.suggested_terminal && (
+              <div className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded p-2">
+                ✈️ Flight detected: Terminal {flightInfo.suggested_terminal} suggested
+                {flightInfo.delayed && flightInfo.delayed > 0 && (
+                  <span className="block text-amber-400">⚠️ Flight delayed by {Math.floor(flightInfo.delayed / 60)} minutes</span>
+                )}
+              </div>
+            )}
             <Select
               label={t(lang, 'terminal')}
-              value={form.terminal}
+              value={flightInfo?.suggested_terminal || form.terminal}
               onChange={(v) => setForm({ ...form, terminal: v })}
               options={['A', 'B', 'C', 'D', 'E']}
             />
@@ -323,7 +382,7 @@ function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLo
           </div>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3 order-1 lg:order-2">
           <Timeline
             steps={[
               { label: 'Submitted', done: !!requestId },
@@ -338,23 +397,44 @@ function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLo
             <StatusPill label="Request" value={requestId ? 'Submitted' : 'Draft'} tone={requestId ? 'green' : 'slate'} />
             <StatusPill label="Tracking" value={coords ? 'GPS active' : 'Idle'} tone={coords ? 'blue' : 'slate'} />
             <StatusPill label="Geofence" value={geofenceWarning ? 'Mismatch' : 'OK'} tone={geofenceWarning ? 'amber' : 'green'} />
+            {eta && (
+              <div className="bg-cyan-500/20 border border-cyan-500/50 rounded-lg p-2 space-y-1">
+                <div className="text-xs font-semibold text-cyan-200">Estimated Arrival</div>
+                <div className="text-lg font-bold text-cyan-100">{eta.etaMinutes} min</div>
+                <div className="text-xs text-cyan-300">{eta.distanceKm} km ({eta.distanceMiles} mi) away</div>
+              </div>
+            )}
             <p className="text-xs text-slate-500">
               After submitting, keep this tab open. Your location will auto-update to the driver and admin once the request ID is assigned.
             </p>
           </div>
         </div>
       </div>
-      <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 p-3 h-72">
-        <div className="text-sm text-slate-300 mb-2">Live map</div>
-        <LiveMap driver={driverLoc} guests={coords ? [coords] : []} />
+      <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 overflow-hidden" style={{ height: '400px', minHeight: '400px' }}>
+        <div className="bg-slate-800/50 px-4 py-2 border-b border-slate-700 flex items-center justify-between">
+          <div className="text-sm font-semibold text-slate-300">📍 Live Map & Route</div>
+          {driverLoc && (
+            <div className="text-xs text-slate-400">
+              🚐 Shuttle tracking active
+            </div>
+          )}
+        </div>
+        <LiveMap 
+          driver={driverLoc} 
+          guests={coords ? [coords] : []} 
+          showRoute={!!driverLoc && !!coords}
+          fromHotel={true}
+        />
       </div>
+      {requestId && <ChatPanel requestId={requestId} role="guest" userName={form.guest_name || 'Guest'} lang={lang} />}
     </Card>
   );
 }
 
-function DriverPanel({ driverLoc, requests, statusMap, logs }) {
+function DriverPanel({ driverLoc, requests, statusMap, logs, etas }) {
   const [lastSent, setLastSent] = useState(null);
   const [intervalId, setIntervalId] = useState(null);
+  const [selectedRequestId, setSelectedRequestId] = useState(null);
 
   useEffect(() => {
     return () => {
@@ -388,6 +468,10 @@ function DriverPanel({ driverLoc, requests, statusMap, logs }) {
           const c = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setLastSent(c);
           socket.emit('update_driver_location', c);
+          // Request ETA for all active requests
+          activeRequests.forEach(req => {
+            socket.emit('request_eta', { request_id: req.id });
+          });
         },
         (err) => console.error(err),
         { enableHighAccuracy: true }
@@ -396,76 +480,225 @@ function DriverPanel({ driverLoc, requests, statusMap, logs }) {
     setIntervalId(id);
   };
 
+  const handleImHere = (requestId) => {
+    socket.emit('driver_arrived', { request_id: requestId });
+  };
+
   const activeRequests = (requests || []).filter((r) => r.status !== 'completed');
 
   return (
-    <Card title="Driver · Pilot Console" accent="from-cyan-500 to-emerald-400">
-      <div className="grid gap-4 lg:grid-cols-[1.2fr,1fr]">
-        <div className="space-y-3">
-          <div className="space-y-2">
-            <Button variant="primary" onClick={sendOnce}>Send my location once</Button>
-            <Button variant={intervalId ? 'ghost' : 'secondary'} onClick={toggleStream}>
-              {intervalId ? 'Stop streaming' : 'Start streaming (10s)'}
-            </Button>
-            {lastSent && <div className="text-xs text-slate-400">Last sent: {lastSent.lat.toFixed(5)}, {lastSent.lng.toFixed(5)}</div>}
-            {driverLoc && <div className="text-xs text-slate-400">Broadcasted: {driverLoc.lat?.toFixed?.(5)}, {driverLoc.lng?.toFixed?.(5)}</div>}
-          </div>
-
+    <Card title="🚐 Driver Dashboard" accent="from-cyan-500 to-emerald-400">
+      {/* Location Controls */}
+      <div className="bg-gradient-to-r from-cyan-500/10 to-emerald-500/10 border border-cyan-500/30 rounded-xl p-4 mb-4">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <Button 
+            variant="primary" 
+            onClick={sendOnce}
+            className="flex-1 sm:flex-none"
+          >
+            📍 Send Location Once
+          </Button>
+          <Button 
+            variant={intervalId ? 'ghost' : 'secondary'} 
+            onClick={toggleStream}
+            className="flex-1 sm:flex-none"
+          >
+            {intervalId ? '⏸️ Stop Streaming' : '▶️ Start Streaming (10s)'}
+          </Button>
         </div>
-
-        <div className="space-y-3">
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 h-72">
-            <div className="text-sm text-slate-300 mb-2">Live map</div>
-            <LiveMap driver={driverLoc} guests={activeRequests.map((r) => r.coordinates).filter(Boolean)} />
-          </div>
-          <div className="text-sm text-slate-300">Ride requests</div>
-          <div className="space-y-2 max-h-[320px] overflow-auto pr-1">
-            {activeRequests.map((req) => (
-              <div key={req.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3 space-y-2">
-                <div className="flex justify-between">
-                  <div>
-                    <div className="font-semibold text-slate-100">{req.guest_name}</div>
-                    <div className="text-xs text-slate-400">Terminal {req.terminal} · Gate {req.gate_proximity}</div>
-                  </div>
-                  <StatusPill label="" value={statusMap[req.id] || req.status || 'pending'} tone="blue" />
-                </div>
-                <div className="text-xs text-slate-400">Phone: {req.phone}</div>
-                <div className="text-xs text-slate-400">Phone: {req.phone}</div>
-                <div className="flex flex-col gap-2">
-                  <div className="flex gap-2">
-                    <Button variant="secondary" onClick={() => window.open(`tel:${req.phone}`, '_self')}>Call</Button>
-                    <Button variant="ghost" onClick={() => window.open(`https://www.google.com/maps?q=${req.coordinates?.lat},${req.coordinates?.lng}`, '_blank')}>Get location</Button>
-                  </div>
-                  <Select
-                    label="Change status"
-                    value={statusMap[req.id] || req.status || 'pending'}
-                    onChange={(v) => socket.emit('status_change', { request_id: req.id, status: v })}
-                    options={['accepted', 'picked_up', 'completed']}
-                  />
-                </div>
-              </div>
-            ))}
-            {!activeRequests.length && <div className="text-xs text-slate-500">No active requests.</div>}
-          </div>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+          {lastSent && (
+            <div className="text-slate-400">
+              <span className="font-semibold text-slate-300">Last Sent:</span> {lastSent.lat.toFixed(5)}, {lastSent.lng.toFixed(5)}
+            </div>
+          )}
+          {driverLoc && (
+            <div className="text-slate-400">
+              <span className="font-semibold text-slate-300">Broadcasting:</span> {driverLoc.lat?.toFixed?.(5)}, {driverLoc.lng?.toFixed?.(5)}
+            </div>
+          )}
         </div>
       </div>
-      {logs?.length ? (
-        <div className="mt-3">
-          <div className="text-sm text-slate-300 mb-1">Recent events</div>
-          <EventFeed logs={logs.slice(-5)} />
+
+      {/* Main Grid Layout */}
+      <div className="grid gap-4 lg:grid-cols-[1.5fr,1fr]">
+        {/* Left: Requests List */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-semibold text-slate-100">Active Ride Requests</h3>
+            <span className="bg-cyan-500/20 text-cyan-300 text-xs font-semibold px-2 py-1 rounded-full">
+              {activeRequests.length} {activeRequests.length === 1 ? 'request' : 'requests'}
+            </span>
+          </div>
+          
+          <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900">
+            {activeRequests.length === 0 ? (
+              <div className="text-center py-12 text-slate-500">
+                <div className="text-4xl mb-2">🚕</div>
+                <div className="text-sm">No active ride requests</div>
+                <div className="text-xs mt-1">Waiting for guest requests...</div>
+              </div>
+            ) : (
+              activeRequests.map((req) => {
+                const reqEta = etas[req.id];
+                const currentStatus = statusMap[req.id] || req.status || 'pending';
+                
+                return (
+                  <div key={req.id} className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 hover:border-cyan-500/50 transition-all space-y-3">
+                    {/* Header */}
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="font-bold text-lg text-slate-100">{req.guest_name}</div>
+                          <StatusPill label="" value={currentStatus} tone="blue" />
+                        </div>
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
+                          <span>✈️ Terminal {req.terminal}</span>
+                          <span>🚪 Gate {req.gate_proximity}</span>
+                          {req.voucher_code && <span>🎫 {req.voucher_code}</span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ETA Display */}
+                    {reqEta && (
+                      <div className="bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/50 rounded-lg p-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-sm font-bold text-cyan-200">ETA: {reqEta.etaMinutes} minutes</div>
+                            <div className="text-xs text-cyan-300 mt-0.5">{reqEta.distanceKm} km ({reqEta.distanceMiles} mi) away</div>
+                          </div>
+                          <div className="text-2xl">⏱️</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Contact Info */}
+                    <div className="bg-slate-800/50 rounded-lg p-2">
+                      <div className="text-xs text-slate-400 mb-1">Contact</div>
+                      <a href={`tel:${req.phone}`} className="text-sm text-cyan-400 hover:text-cyan-300 font-medium">
+                        📞 {req.phone}
+                      </a>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <Button 
+                        variant="secondary" 
+                        onClick={() => window.open(`tel:${req.phone}`, '_self')}
+                        className="text-xs py-2"
+                      >
+                        📞 Call
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        onClick={() => window.open(`https://www.google.com/maps?q=${req.coordinates?.lat},${req.coordinates?.lng}`, '_blank')}
+                        className="text-xs py-2"
+                      >
+                        🗺️ Map
+                      </Button>
+                      <Button 
+                        variant="primary" 
+                        onClick={() => handleImHere(req.id)}
+                        className="text-xs py-2 bg-emerald-600 hover:bg-emerald-700"
+                      >
+                        ✅ I'm Here
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        onClick={() => setSelectedRequestId(selectedRequestId === req.id ? null : req.id)}
+                        className={`text-xs py-2 ${selectedRequestId === req.id ? 'bg-indigo-600 text-white' : ''}`}
+                      >
+                        💬 Chat
+                      </Button>
+                    </div>
+
+                    {/* Status Selector */}
+                    <div className="border-t border-slate-800 pt-3">
+                      <Select
+                        label="Update Status"
+                        value={currentStatus}
+                        onChange={(v) => {
+                          socket.emit('status_change', { request_id: req.id, status: v });
+                          if (v === 'accepted') {
+                            socket.emit('request_eta', { request_id: req.id });
+                          }
+                        }}
+                        options={['accepted', 'picked_up', 'completed']}
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
-      ) : null}
+
+        {/* Right: Map */}
+        <div className="space-y-3">
+          <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden" style={{ height: '400px', minHeight: '400px' }}>
+            <LiveMap 
+              driver={driverLoc} 
+              guests={activeRequests.map((r) => r.coordinates).filter(Boolean)}
+              showRoute={true}
+              fromHotel={false}
+            />
+          </div>
+          
+          {logs?.length > 0 && (
+            <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-3">
+              <div className="text-sm font-semibold text-slate-300 mb-2">Recent Activity</div>
+              <EventFeed logs={logs.slice(-3)} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Chat Panel */}
+      {selectedRequestId && (
+        <ChatPanel
+          requestId={selectedRequestId}
+          role="driver"
+          userName="Driver"
+          lang="en"
+        />
+      )}
     </Card>
   );
 }
 
-function AdminPanel({ grouped, driverLoc, requests, logs }) {
+function AdminPanel({ grouped, driverLoc, requests, logs, etas }) {
   const groups = useMemo(() => grouped || [], [grouped]);
+
+  const exportCSV = async () => {
+    try {
+      const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+      const response = await fetch(`${socketUrl}/api/export/csv`);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `shuttle-requests-${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('CSV export failed:', err);
+      alert('Failed to export CSV. Please try again.');
+    }
+  };
+
   return (
     <Card title="Admin · Control Tower" accent="from-amber-400 to-pink-500">
       <div className="space-y-3">
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-sm text-slate-300">
-          Driver location: {driverLoc ? `${driverLoc.lat?.toFixed?.(5)}, ${driverLoc.lng?.toFixed?.(5)}` : 'No signal yet'}
+        <div className="flex justify-between items-center">
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-sm text-slate-300 flex-1">
+            Driver location: {driverLoc ? `${driverLoc.lat?.toFixed?.(5)}, ${driverLoc.lng?.toFixed?.(5)}` : 'No signal yet'}
+          </div>
+          <Button variant="primary" onClick={exportCSV} className="ml-2">
+            📥 Export CSV
+          </Button>
         </div>
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 h-72">
           <div className="text-sm text-slate-300 mb-2">Live map</div>

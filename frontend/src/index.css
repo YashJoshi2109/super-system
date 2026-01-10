@@ -4,6 +4,42 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out;
+}
+
+/* Mobile responsive scrollbar */
+@media (max-width: 640px) {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+}
+
+/* Touch-friendly buttons on mobile */
+@media (max-width: 768px) {
+  button, a {
+    min-height: 44px; /* iOS recommended touch target */
+  }
+}
+
+/* Mobile viewport fix */
+@supports (-webkit-touch-callout: none) {
+  .min-h-screen {
+    min-height: -webkit-fill-available;
+  }
+}
+
 body {
   font-family: system-ui, -apple-system, Segoe UI, sans-serif;
 }

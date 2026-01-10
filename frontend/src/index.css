@@ -40,6 +40,56 @@
   }
 }
 
+/* Ensure chatbot is always accessible */
+.rcb-chat-container {
+  z-index: 9999 !important;
+}
+
+/* Mobile-specific fixes */
+@media (max-width: 640px) {
+  /* Better touch targets */
+  button, a, input, select {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+  
+  /* Prevent text size adjustment on iOS */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+  
+  /* Better scrolling */
+  .overflow-y-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Smooth animations */
+* {
+  transition-property: color, background-color, border-color, transform, opacity;
+  transition-duration: 200ms;
+  transition-timing-function: ease-in-out;
+}
+
+/* Hide scrollbar but keep functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Better mobile form inputs */
+@media (max-width: 640px) {
+  input[type="text"],
+  input[type="tel"],
+  input[type="number"],
+  select {
+    font-size: 16px !important; /* Prevents iOS zoom on focus */
+  }
+}
+
 body {
   font-family: system-ui, -apple-system, Segoe UI, sans-serif;
 }

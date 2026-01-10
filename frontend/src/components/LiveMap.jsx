@@ -24,7 +24,7 @@ function createMarkerEl(label, color, emoji) {
 // Hotel location: Super 8 Bedford DFW West, 1700 Airport Freeway, Bedford, TX
 const HOTEL_COORDS = { lat: 32.836, lng: -97.138 };
 
-export default function LiveMap({ driver, guests = [], showRoute = false, fromHotel = false }) {
+export default function LiveMap({ driver, guests = [], showRoute = false, fromHotel = false, alwaysShowHotel = false }) {
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
   const driverMarker = useRef(null);
@@ -92,15 +92,18 @@ export default function LiveMap({ driver, guests = [], showRoute = false, fromHo
         return;
       }
 
-      // Hotel marker (always show if fromHotel is true)
-      if (fromHotel) {
+      // Hotel marker (always show if fromHotel or alwaysShowHotel is true)
+      if (fromHotel || alwaysShowHotel) {
         if (!hotelMarker.current) {
-          hotelMarker.current = new maplibregl.Marker({ element: createMarkerEl('Hotel', '#10b981', '🏨') })
+          hotelMarker.current = new maplibregl.Marker({ 
+            element: createMarkerEl('Hotel', '#10b981', '🏨'),
+            anchor: 'bottom'
+          })
             .setLngLat([HOTEL_COORDS.lng, HOTEL_COORDS.lat])
-            .setPopup(new maplibregl.Popup({ offset: 12 }).setText('Super 8 Bedford DFW West'))
+            .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML('<div style="font-weight: bold; color: #10b981; font-size: 14px;">🏨 Super 8 Bedford DFW West</div><div style="font-size: 11px; color: #666; margin-top: 4px;">1700 Airport Freeway, Bedford, TX</div>'))
             .addTo(mapInstance.current);
         }
-      } else if (hotelMarker.current) {
+      } else if (hotelMarker.current && !alwaysShowHotel) {
         hotelMarker.current.remove();
         hotelMarker.current = null;
       }
@@ -134,14 +137,14 @@ export default function LiveMap({ driver, guests = [], showRoute = false, fromHo
         if (key) {
           let fromCoords, toCoords;
           
-          if (fromHotel) {
-            // Guest view: Route from hotel to guest location
+          if (fromHotel || alwaysShowHotel) {
+            // Guest view: Always show route from hotel (Super 8) to guest location
             if (guests.length > 0) {
               fromCoords = HOTEL_COORDS;
               toCoords = guests[0];
             }
           } else {
-            // Driver view: Route from driver to guest
+            // Driver view: Route from driver current location to guest
             if (driver && guests.length > 0) {
               fromCoords = driver;
               toCoords = guests[0];
@@ -149,36 +152,65 @@ export default function LiveMap({ driver, guests = [], showRoute = false, fromHo
           }
 
           if (fromCoords && toCoords) {
-            fetch(`https://api.maptiler.com/directions/mapbox/driving/${fromCoords.lng},${fromCoords.lat};${toCoords.lng},${toCoords.lat}?geometries=geojson&access_token=${key}`)
-              .then(res => res.json())
-              .then(data => {
-                if (data.routes && data.routes.length > 0 && mapInstance.current.getSource('route')) {
-                  const route = data.routes[0].geometry;
-                  mapInstance.current.getSource('route').setData({
-                    type: 'Feature',
-                    geometry: route
-                  });
-                }
-              })
-              .catch(err => console.error('Route fetch error:', err));
+            // Debounce to avoid excessive API calls
+            const routeKey = `${fromCoords.lng},${fromCoords.lat};${toCoords.lng},${toCoords.lat}`;
+            const lastRouteKey = mapInstance.current._lastRouteKey;
+            
+            if (!lastRouteKey || lastRouteKey !== routeKey) {
+              mapInstance.current._lastRouteKey = routeKey;
+              
+              fetch(`https://api.maptiler.com/directions/mapbox/driving/${fromCoords.lng},${fromCoords.lat};${toCoords.lng},${toCoords.lat}?geometries=geojson&access_token=${key}`)
+                .then(res => res.json())
+                .then(data => {
+                  if (data.routes && data.routes.length > 0 && mapInstance.current && mapInstance.current.getSource('route')) {
+                    const route = data.routes[0].geometry;
+                    mapInstance.current.getSource('route').setData({
+                      type: 'Feature',
+                      properties: {
+                        distance: Math.round(data.routes[0].distance / 1000),
+                        duration: Math.round(data.routes[0].duration / 60)
+                      },
+                      geometry: route
+                    });
+                  }
+                })
+                .catch(err => console.error('Route fetch error:', err));
+            }
+          } else if (mapInstance.current.getSource('route')) {
+            // Clear route if no coordinates
+            mapInstance.current.getSource('route').setData({
+              type: 'FeatureCollection',
+              features: []
+            });
           }
         }
       }
 
-      // Fit bounds
+      // Fit bounds - always include hotel if fromHotel or alwaysShowHotel
       const coords = [
-        ...(fromHotel ? [[HOTEL_COORDS.lng, HOTEL_COORDS.lat]] : []),
+        ...((fromHotel || alwaysShowHotel) ? [[HOTEL_COORDS.lng, HOTEL_COORDS.lat]] : []),
         ...(driver ? [[driver.lng, driver.lat]] : []),
         ...guests.filter(Boolean).map((g) => [g.lng, g.lat])
       ];
       if (coords.length) {
         const bounds = coords.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(coords[0], coords[0]));
-        mapInstance.current.fitBounds(bounds, { padding: { top: 60, bottom: 60, left: 60, right: 60 }, maxZoom: 15 });
+        mapInstance.current.fitBounds(bounds, { 
+          padding: { top: 80, bottom: 80, left: 80, right: 80 }, 
+          maxZoom: 14,
+          duration: 1000
+        });
+      } else if (fromHotel || alwaysShowHotel) {
+        // If no other coords, center on hotel
+        mapInstance.current.flyTo({
+          center: [HOTEL_COORDS.lng, HOTEL_COORDS.lat],
+          zoom: 13,
+          duration: 1000
+        });
       }
     };
 
     updateMap();
-  }, [driver, guests, showRoute, fromHotel]);
+  }, [driver, guests, showRoute, fromHotel, alwaysShowHotel]);
 
   return <div ref={mapRef} className="w-full h-full rounded-xl overflow-hidden" />;
 }

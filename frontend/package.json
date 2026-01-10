@@ -14,6 +14,7 @@
     "i18next": "^23.10.1",
     "maplibre-gl": "^5.15.0",
     "react": "^18.3.1",
+    "react-chatbotify": "^2.5.0",
     "react-dom": "^18.3.1",
     "react-i18next": "^13.5.0",
     "socket.io-client": "^4.7.5"

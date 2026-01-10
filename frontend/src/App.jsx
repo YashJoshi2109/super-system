@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { socket } from './lib/socket.js';
 import LiveMap from './components/LiveMap.jsx';
-import ChatPanel from './components/ChatPanel.jsx';
+import HotelChatBot from './components/HotelChatBot.jsx';
+import HorizontalJourney from './components/HorizontalJourney.jsx';
 import NotificationToast from './components/NotificationToast.jsx';
 import { t } from './i18n.js';
 
@@ -301,9 +302,10 @@ function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLo
   };
 
   return (
-    <Card title="👤 Guest · Request Ride" accent="from-indigo-500 to-cyan-400">
-      <div className="grid gap-4 lg:grid-cols-[1.2fr,1fr]">
-        <div className="space-y-3 order-2 lg:order-1">
+    <>
+      <Card title="👤 Guest · Request Ride" accent="from-indigo-500 to-cyan-400">
+        <div className="grid gap-4 lg:grid-cols-[1.2fr,1fr]">
+          <div className="space-y-3 order-2 lg:order-1">
           <form className="space-y-3" onSubmit={submit}>
             <Input label={t(lang, 'name')} value={form.guest_name} onChange={(v) => setForm({ ...form, guest_name: v })} required />
             <div className="grid grid-cols-[120px,1fr] gap-2">
@@ -316,10 +318,10 @@ function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLo
               <Input label={t(lang, 'phone_hint')} value={form.phone_number} onChange={(v) => setForm({ ...form, phone_number: v })} required />
             </div>
             <Input
-              label="Flight Code (e.g., AA1234) - Optional"
+              label="✈️ Flight Code (Optional)"
               value={form.airline_code}
               onChange={(v) => setForm({ ...form, airline_code: v.toUpperCase() })}
-              placeholder="AA1234 (optional, auto-detects terminal)"
+              placeholder="AA1234 (auto-detects terminal)"
             />
             {flightInfo && flightInfo.suggested_terminal && (
               <div className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded p-2">
@@ -361,11 +363,22 @@ function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLo
                 else stopTracking();
               }}
             />
-            <div className="flex gap-2">
-              <Button type="button" variant="ghost" onClick={shareLive ? stopTracking : startTracking}>
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <Button 
+                type="button" 
+                variant="ghost" 
+                onClick={shareLive ? stopTracking : startTracking}
+                className="sm:w-auto order-2 sm:order-1"
+              >
                 {shareLive ? '🛑 Stop Sharing' : '📍 Start Sharing'}
               </Button>
-              <Button type="submit" variant="primary">{t(lang, 'submit')}</Button>
+              <Button 
+                type="submit" 
+                variant="primary"
+                className="sm:flex-1 text-base sm:text-lg order-1 sm:order-2"
+              >
+                🚐 Request Ride
+              </Button>
             </div>
           </form>
           <div className="text-xs text-slate-400 space-y-1">
@@ -383,51 +396,142 @@ function GuestPanel({ lang, requestId, setRequestId, geofenceWarning, setGuestLo
         </div>
 
         <div className="space-y-3 order-1 lg:order-2">
-          <Timeline
-            steps={[
-              { label: 'Submitted', done: !!requestId },
-              { label: 'Tracking on', done: !!coords },
-              { label: 'Accepted', done: statusMap[requestId] === 'accepted' || statusMap[requestId] === 'picked_up' || statusMap[requestId] === 'completed' },
-              { label: 'Picked up', done: statusMap[requestId] === 'picked_up' || statusMap[requestId] === 'completed' },
-              { label: 'Completed', done: statusMap[requestId] === 'completed' }
-            ]}
-          />
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 space-y-2">
-            <div className="text-sm text-slate-300">Live status</div>
-            <StatusPill label="Request" value={requestId ? 'Submitted' : 'Draft'} tone={requestId ? 'green' : 'slate'} />
-            <StatusPill label="Tracking" value={coords ? 'GPS active' : 'Idle'} tone={coords ? 'blue' : 'slate'} />
-            <StatusPill label="Geofence" value={geofenceWarning ? 'Mismatch' : 'OK'} tone={geofenceWarning ? 'amber' : 'green'} />
-            {eta && (
-              <div className="bg-cyan-500/20 border border-cyan-500/50 rounded-lg p-2 space-y-1">
-                <div className="text-xs font-semibold text-cyan-200">Estimated Arrival</div>
-                <div className="text-lg font-bold text-cyan-100">{eta.etaMinutes} min</div>
-                <div className="text-xs text-cyan-300">{eta.distanceKm} km ({eta.distanceMiles} mi) away</div>
+          {/* Horizontal Journey Timeline */}
+          <div className="bg-gradient-to-br from-slate-900 to-slate-800 border border-slate-700 rounded-xl p-4 overflow-hidden">
+            <div className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2">
+              <span className="text-lg">🚀</span>
+              <span>Your Journey</span>
+            </div>
+            <HorizontalJourney 
+              status={statusMap[requestId]} 
+              hasRequestId={!!requestId}
+              hasCoords={!!coords}
+            />
+          </div>
+
+          {/* Status Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="bg-gradient-to-br from-emerald-500/20 to-green-600/20 border border-emerald-500/50 rounded-lg p-3">
+              <div className="text-xs text-emerald-300 mb-1">Request</div>
+              <div className="text-sm font-bold text-emerald-200">{requestId ? '✅ Submitted' : '⏳ Draft'}</div>
+            </div>
+            <div className="bg-gradient-to-br from-blue-500/20 to-cyan-600/20 border border-blue-500/50 rounded-lg p-3">
+              <div className="text-xs text-blue-300 mb-1">Tracking</div>
+              <div className="text-sm font-bold text-blue-200">{coords ? '📍 Active' : '💤 Idle'}</div>
+            </div>
+            <div className="bg-gradient-to-br from-purple-500/20 to-indigo-600/20 border border-purple-500/50 rounded-lg p-3">
+              <div className="text-xs text-purple-300 mb-1">Geofence</div>
+              <div className="text-sm font-bold text-purple-200">{geofenceWarning ? '⚠️ Warning' : '✅ OK'}</div>
+            </div>
+          </div>
+
+          {/* ETA Display - Always show 45-50 minutes after submission */}
+          {requestId && (
+            <div className="bg-gradient-to-r from-cyan-500/20 via-blue-500/20 to-indigo-500/20 border border-cyan-500/50 rounded-xl p-4 space-y-3 shadow-lg backdrop-blur-sm">
+              <div className="flex items-center gap-3 mb-1">
+                <div className="text-3xl">⏱️</div>
+                <div className="flex-1">
+                  <div className="text-base font-bold text-cyan-200">Estimated Arrival Time</div>
+                  <div className="text-xs text-cyan-300/80">Based on traffic & road conditions</div>
+                </div>
               </div>
-            )}
-            <p className="text-xs text-slate-500">
-              After submitting, keep this tab open. Your location will auto-update to the driver and admin once the request ID is assigned.
+              <div className="flex items-baseline gap-2 mb-3">
+                <div className="text-5xl font-extrabold text-cyan-100">45-50</div>
+                <div className="text-xl text-cyan-300 font-semibold">minutes</div>
+              </div>
+              <div className="bg-gradient-to-r from-cyan-600/30 to-blue-600/30 rounded-lg p-4 border border-cyan-400/40 shadow-inner">
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">🚐</span>
+                  <div className="flex-1">
+                    <div className="text-sm font-bold text-cyan-100 mb-1">Stay tuned - our shuttle will pick you up!</div>
+                    <div className="text-xs text-cyan-200/90 leading-relaxed">
+                      We're monitoring traffic conditions and will keep you updated in real-time. Your driver will notify you when they arrive.
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {eta && (statusMap[requestId] === 'accepted' || statusMap[requestId] === 'picked_up') && (
+                <div className="mt-2 pt-3 border-t border-cyan-500/30">
+                  <div className="text-xs text-cyan-300/80 mb-1">📊 Live Tracking (Updated every 30s):</div>
+                  <div className="flex items-center justify-between bg-slate-900/40 rounded-lg px-3 py-2">
+                    <span className="text-xs text-cyan-200">Current ETA:</span>
+                    <span className="text-sm font-bold text-cyan-100">{eta.etaMinutes} min ({eta.distanceKm} km)</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          
+          <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3">
+            <p className="text-xs text-slate-400 leading-relaxed">
+              <span className="font-semibold text-slate-300">💡 Tip:</span> Keep this tab open for live updates. Your location auto-updates to the driver and admin.
             </p>
           </div>
         </div>
       </div>
-      <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 overflow-hidden" style={{ height: '400px', minHeight: '400px' }}>
-        <div className="bg-slate-800/50 px-4 py-2 border-b border-slate-700 flex items-center justify-between">
-          <div className="text-sm font-semibold text-slate-300">📍 Live Map & Route</div>
-          {driverLoc && (
-            <div className="text-xs text-slate-400">
-              🚐 Shuttle tracking active
+      {/* Live Map - Always show hotel, route from hotel to guest, driver when accepted */}
+      <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 overflow-hidden shadow-xl" style={{ height: '450px', minHeight: '450px' }}>
+        <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-4 py-3 border-b border-slate-600 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🗺️</span>
+            <div>
+              <div className="text-sm font-semibold text-slate-200">🗺️ Live Map & Route</div>
+              <div className="text-xs text-slate-400">
+                {coords && requestId ? '🛣️ Route: Hotel → Your Location' : '🏨 Hotel location always visible'}
+              </div>
             </div>
-          )}
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="px-2 py-1 rounded-full bg-green-500/20 text-green-300 border border-green-500/50 flex items-center gap-1">
+              <span>🏨</span>
+              <span>Hotel</span>
+            </span>
+            {driverLoc && (statusMap[requestId] === 'accepted' || statusMap[requestId] === 'picked_up' || statusMap[requestId] === 'completed') && (
+              <span className="px-2 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 flex items-center gap-1">
+                <span>🚐</span>
+                <span>Shuttle</span>
+              </span>
+            )}
+            {coords && (
+              <span className="px-2 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/50 flex items-center gap-1">
+                <span>📍</span>
+                <span>You</span>
+              </span>
+            )}
+            {coords && requestId && (
+              <span className="px-2 py-1 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/50 flex items-center gap-1">
+                <span>🛣️</span>
+                <span>Route</span>
+              </span>
+            )}
+          </div>
         </div>
         <LiveMap 
-          driver={driverLoc} 
+          driver={(statusMap[requestId] === 'accepted' || statusMap[requestId] === 'picked_up' || statusMap[requestId] === 'completed') ? driverLoc : null}
           guests={coords ? [coords] : []} 
-          showRoute={!!driverLoc && !!coords}
+          showRoute={!!coords && !!requestId}
           fromHotel={true}
+          alwaysShowHotel={true}
         />
       </div>
-      {requestId && <ChatPanel requestId={requestId} role="guest" userName={form.guest_name || 'Guest'} lang={lang} />}
-    </Card>
+      
+      {/* Chatbot - Always present */}
+      <HotelChatBot 
+        requestId={requestId}
+        role="guest"
+        userName={form.guest_name || 'Guest'}
+        status={statusMap[requestId]}
+      />
+      </Card>
+      
+      {/* Chatbot - Always present */}
+      <HotelChatBot 
+        requestId={requestId}
+        role="guest"
+        userName={form.guest_name || 'Guest'}
+        status={statusMap[requestId]}
+      />
+    </>
   );
 }
 
@@ -487,7 +591,8 @@ function DriverPanel({ driverLoc, requests, statusMap, logs, etas }) {
   const activeRequests = (requests || []).filter((r) => r.status !== 'completed');
 
   return (
-    <Card title="🚐 Driver Dashboard" accent="from-cyan-500 to-emerald-400">
+    <>
+      <Card title="🚐 Driver Dashboard" accent="from-cyan-500 to-emerald-400">
       {/* Location Controls */}
       <div className="bg-gradient-to-r from-cyan-500/10 to-emerald-500/10 border border-cyan-500/30 rounded-xl p-4 mb-4">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -582,41 +687,34 @@ function DriverPanel({ driverLoc, requests, statusMap, logs, etas }) {
                     </div>
 
                     {/* Action Buttons */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                       <Button 
                         variant="secondary" 
                         onClick={() => window.open(`tel:${req.phone}`, '_self')}
-                        className="text-xs py-2"
+                        className="text-sm py-2.5"
                       >
                         📞 Call
                       </Button>
                       <Button 
                         variant="ghost" 
                         onClick={() => window.open(`https://www.google.com/maps?q=${req.coordinates?.lat},${req.coordinates?.lng}`, '_blank')}
-                        className="text-xs py-2"
+                        className="text-sm py-2.5"
                       >
                         🗺️ Map
                       </Button>
                       <Button 
                         variant="primary" 
                         onClick={() => handleImHere(req.id)}
-                        className="text-xs py-2 bg-emerald-600 hover:bg-emerald-700"
+                        className="text-sm py-2.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 col-span-2"
                       >
-                        ✅ I'm Here
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        onClick={() => setSelectedRequestId(selectedRequestId === req.id ? null : req.id)}
-                        className={`text-xs py-2 ${selectedRequestId === req.id ? 'bg-indigo-600 text-white' : ''}`}
-                      >
-                        💬 Chat
+                        ✅ I'm Here - Notify Guest
                       </Button>
                     </div>
 
                     {/* Status Selector */}
                     <div className="border-t border-slate-800 pt-3">
                       <Select
-                        label="Update Status"
+                        label="📊 Update Status"
                         value={currentStatus}
                         onChange={(v) => {
                           socket.emit('status_change', { request_id: req.id, status: v });
@@ -624,8 +722,11 @@ function DriverPanel({ driverLoc, requests, statusMap, logs, etas }) {
                             socket.emit('request_eta', { request_id: req.id });
                           }
                         }}
-                        options={['accepted', 'picked_up', 'completed']}
+                        options={['pending', 'accepted', 'picked_up', 'completed']}
                       />
+                      <div className="text-xs text-slate-500 mt-1">
+                        Status progression: Pending → Accepted → Picked Up → Completed
+                      </div>
                     </div>
                   </div>
                 );
@@ -636,12 +737,16 @@ function DriverPanel({ driverLoc, requests, statusMap, logs, etas }) {
 
         {/* Right: Map */}
         <div className="space-y-3">
-          <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden" style={{ height: '400px', minHeight: '400px' }}>
+          <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden shadow-xl" style={{ height: '450px', minHeight: '450px' }}>
+            <div className="bg-gradient-to-r from-cyan-800/50 to-emerald-800/50 px-3 py-2 border-b border-slate-700">
+              <div className="text-xs font-semibold text-slate-200">🗺️ Live Map - All Guests</div>
+            </div>
             <LiveMap 
               driver={driverLoc} 
               guests={activeRequests.map((r) => r.coordinates).filter(Boolean)}
               showRoute={true}
               fromHotel={false}
+              alwaysShowHotel={false}
             />
           </div>
           
@@ -653,17 +758,16 @@ function DriverPanel({ driverLoc, requests, statusMap, logs, etas }) {
           )}
         </div>
       </div>
-
-      {/* Chat Panel */}
-      {selectedRequestId && (
-        <ChatPanel
-          requestId={selectedRequestId}
-          role="driver"
-          userName="Driver"
-          lang="en"
-        />
-      )}
-    </Card>
+      </Card>
+      
+      {/* Chatbot - Always present for driver */}
+      <HotelChatBot 
+        requestId={selectedRequestId}
+        role="driver"
+        userName="Driver"
+        status="active"
+      />
+    </>
   );
 }
 
@@ -766,14 +870,16 @@ function Card({ title, accent, children }) {
   );
 }
 
-function Input({ label, value, onChange, required }) {
+function Input({ label, value, onChange, required, placeholder, type = "text" }) {
   return (
-    <label className="text-sm text-slate-200 block space-y-1">
-      <span>{label}{required && <span className="text-rose-400"> *</span>}</span>
+    <label className="text-sm text-slate-200 block space-y-1.5">
+      <span className="font-medium">{label}{required && <span className="text-rose-400"> *</span>}</span>
       <input
-        className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        type={type}
+        className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-3 text-slate-100 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all placeholder:text-slate-500"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
         required={required}
       />
     </label>
@@ -782,29 +888,29 @@ function Input({ label, value, onChange, required }) {
 
 function Select({ label, value, onChange, options }) {
   return (
-    <label className="text-sm text-slate-200 block space-y-1">
-      <span>{label}</span>
+    <label className="text-sm text-slate-200 block space-y-1.5">
+      <span className="font-medium">{label}</span>
       <select
-        className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        className="w-full rounded-lg border border-slate-700 bg-slate-800/50 px-4 py-3 text-slate-100 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all appearance-none bg-[url('data:image/svg+xml;charset=UTF-8,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"white\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polyline points=\"6 9 12 15 18 9\"></polyline></svg>')] bg-no-repeat bg-right-3 bg-[length:20px] pr-10"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
         <option value="">Select</option>
-        {options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+        {options.map((opt) => <option key={opt} value={opt} className="bg-slate-800">{opt}</option>)}
       </select>
     </label>
   );
 }
 
-function Button({ children, variant = 'primary', ...props }) {
+function Button({ children, variant = 'primary', className = '', ...props }) {
   const styles = {
-    primary: 'bg-indigo-500 hover:bg-indigo-600 text-white',
-    secondary: 'bg-slate-800 hover:bg-slate-700 text-white',
+    primary: 'bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white shadow-lg shadow-indigo-500/50',
+    secondary: 'bg-slate-800 hover:bg-slate-700 text-white border border-slate-700',
     ghost: 'bg-slate-800/50 hover:bg-slate-700 text-slate-100 border border-slate-700'
   }[variant];
   return (
     <button
-      className={`w-full rounded-lg px-3 py-2 font-semibold transition ${styles}`}
+      className={`w-full rounded-lg px-4 py-3 font-semibold text-base transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed ${styles} ${className}`}
       {...props}
     >
       {children}
@@ -827,33 +933,18 @@ function StatusPill({ label, value, tone }) {
   );
 }
 
-function Timeline({ steps }) {
-  return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 space-y-2">
-      <div className="text-sm text-slate-300">Journey</div>
-      <div className="space-y-2">
-        {steps.map((s, idx) => (
-          <div key={idx} className="flex items-center gap-2 text-sm text-slate-200">
-            <span className={`h-3 w-3 rounded-full ${s.done ? 'bg-emerald-400' : 'bg-slate-700'} border border-slate-800`}></span>
-            <span className={s.done ? 'text-slate-100' : 'text-slate-500'}>{s.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function Toggle({ label, checked, onChange }) {
   return (
-    <label className="flex items-center justify-between text-sm text-slate-200 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2">
-      <span>{label}</span>
+    <label className="flex items-center justify-between text-sm text-slate-200 bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3 cursor-pointer hover:border-slate-600 transition-all">
+      <span className="font-medium flex-1">{label}</span>
       <button
         type="button"
         onClick={() => onChange(!checked)}
-        className={`w-12 h-6 rounded-full transition ${checked ? 'bg-emerald-500' : 'bg-slate-700'} relative`}
+        className={`w-14 h-7 rounded-full transition-all relative flex-shrink-0 ml-3 ${checked ? 'bg-gradient-to-r from-emerald-500 to-green-600' : 'bg-slate-600'}`}
+        aria-label={checked ? 'Turn off' : 'Turn on'}
       >
         <span
-          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${checked ? 'right-0.5' : 'left-0.5'}`}
+          className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-md transition-all transform ${checked ? 'translate-x-7' : 'translate-x-0.5'}`}
         ></span>
       </button>
     </label>

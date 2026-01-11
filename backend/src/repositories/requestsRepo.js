@@ -36,7 +36,7 @@ export async function updateStatus(requestId, status) {
 export async function listRecent(limit = 50) {
   const text = `
     SELECT id, guest_name, phone, airline_code, voucher_code, terminal, gate_proximity,
-           status, language_pref, passenger_count,
+           courtesy_pickup, status, language_pref, passenger_count,
            CASE WHEN selected_seats IS NOT NULL THEN selected_seats::json ELSE NULL END as selected_seats,
            CASE WHEN coords IS NOT NULL THEN json_build_object('lat', ST_Y(coords), 'lng', ST_X(coords)) END as coordinates,
            created_at

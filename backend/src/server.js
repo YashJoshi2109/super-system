@@ -11,6 +11,8 @@ import { initSockets } from './sockets/index.js';
 import { connectRedis } from './redisClient.js';
 import { listRecent } from './repositories/requestsRepo.js';
 import { pool } from './db.js';
+import { authenticateUser } from './services/auth.js';
+import { authenticateToken, requireRole } from './middleware/auth.js';
 
 dotenv.config();
 
@@ -159,6 +161,44 @@ app.get('/health', async (_req, res) => {
       message: err.message
     });
   }
+});
+
+// Authentication endpoints
+app.post('/api/auth/login', express.json(), async (req, res) => {
+  try {
+    const { username, password, role } = req.body;
+    
+    if (!username || !password || !role) {
+      return res.status(400).json({ error: 'Username, password, and role are required' });
+    }
+
+    if (!['driver', 'admin'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role. Must be driver or admin' });
+    }
+
+    const result = await authenticateUser(username, password, role);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        token: result.token,
+        user: result.user
+      });
+    } else {
+      res.status(401).json({ error: result.error });
+    }
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Verify token endpoint
+app.get('/api/auth/verify', authenticateToken, (req, res) => {
+  res.json({
+    valid: true,
+    user: req.user
+  });
 });
 
 // FlightStats Alert Webhook Endpoint

@@ -41,7 +41,7 @@ const joinRequestSchema = z.object({
 
 const statusChangeSchema = z.object({
   request_id: z.string(),
-  status: z.enum(['pending', 'accepted', 'picked_up', 'completed'])
+  status: z.enum(['pending', 'accepted', 'picked_up', 'completed', 'cancelled'])
 });
 
 // Rate limiting for Socket.IO connections
@@ -144,6 +144,18 @@ export function initSockets(io) {
       socket.emit('error', { message: 'Rate limit exceeded. Please slow down.' });
       socket.disconnect(true);
       return;
+    }
+
+    // Send all active requests to newly connected driver/admin clients
+    // This ensures they see all requests when they connect
+    const allActiveRequests = Array.from(activeRequests.values());
+    if (allActiveRequests.length > 0) {
+      // Send individual request events for each active request
+      allActiveRequests.forEach(req => {
+        socket.emit('new_ride_request', req);
+      });
+      // Also send grouped view
+      socket.emit('grouped_requests', groupNearby(allActiveRequests));
     }
 
     socket.on('join_request', async (payload) => {

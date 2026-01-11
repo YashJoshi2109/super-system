@@ -6,11 +6,10 @@ import HorizontalJourney from './components/HorizontalJourney.jsx';
 import NotificationToast from './components/NotificationToast.jsx';
 import ShuttleSeatSelection from './components/ShuttleSeatSelection.jsx';
 import LiveShuttleStatus from './components/LiveShuttleStatus.jsx';
+import LoginModal from './components/LoginModal.jsx';
 import { t } from './i18n.js';
 
 const roles = ['guest', 'driver', 'admin'];
-const driverPin = import.meta.env.VITE_DRIVER_PIN || 'driver123';
-const adminPin = import.meta.env.VITE_ADMIN_PIN || 'admin123';
 
 export default function App() {
   // Initialize theme from localStorage immediately (prevents white flash)
@@ -25,6 +24,10 @@ export default function App() {
   const [role, setRole] = useState('guest');
   const [lang, setLang] = useState('en');
   const [theme, setTheme] = useState(getInitialTheme); // Initialize from localStorage
+  const [authToken, setAuthToken] = useState(null);
+  const [authUser, setAuthUser] = useState(null);
+  const [showLogin, setShowLogin] = useState(false);
+  const [pendingRole, setPendingRole] = useState(null);
   const [weather, setWeather] = useState(null); // Weather data
   const [logs, setLogs] = useState([]);
   const [grouped, setGrouped] = useState([]);
@@ -39,6 +42,34 @@ export default function App() {
   const [etas, setEtas] = useState({}); // request_id -> { etaMinutes, distanceKm }
   const [notifications, setNotifications] = useState([]);
   const [flightInfo, setFlightInfo] = useState(null);
+
+  // Check for stored auth tokens on mount
+  useEffect(() => {
+    const storedDriverToken = localStorage.getItem('auth_token_driver');
+    const storedAdminToken = localStorage.getItem('auth_token_admin');
+    const storedDriverUser = localStorage.getItem('auth_user_driver');
+    const storedAdminUser = localStorage.getItem('auth_user_admin');
+
+    // Auto-login if token exists and role matches
+    if (role === 'driver' && storedDriverToken && storedDriverUser) {
+      try {
+        setAuthToken(storedDriverToken);
+        setAuthUser(JSON.parse(storedDriverUser));
+      } catch (err) {
+        console.error('Error parsing stored user:', err);
+      }
+    } else if (role === 'admin' && storedAdminToken && storedAdminUser) {
+      try {
+        setAuthToken(storedAdminToken);
+        setAuthUser(JSON.parse(storedAdminUser));
+      } catch (err) {
+        console.error('Error parsing stored user:', err);
+      }
+    } else if ((role === 'driver' || role === 'admin') && !authToken) {
+      // Show login if no token
+      setShowLogin(true);
+    }
+  }, [role]);
 
   useEffect(() => {
     const handlers = [
@@ -172,10 +203,34 @@ export default function App() {
             <ThemeToggle theme={theme} setTheme={setTheme} />
           </div>
         </div>
-        {/* Bottom row: Connection, Role Switcher */}
+        {/* Bottom row: Connection, Role Switcher, Auth Status */}
         <div className="flex flex-wrap gap-2 items-center">
           <ConnectionPill state={connection} />
-          <RoleSwitcher role={role} setRole={setRole} />
+          <RoleSwitcher 
+            role={role} 
+            setRole={setRole}
+            authToken={authToken}
+            authUser={authUser}
+            setShowLogin={setShowLogin}
+            setPendingRole={setPendingRole}
+          />
+          {(role === 'driver' || role === 'admin') && authUser && (
+            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/50 text-xs">
+              <span className="text-emerald-300">✓ {authUser.username}</span>
+              <button
+                onClick={() => {
+                  localStorage.removeItem(`auth_token_${role}`);
+                  localStorage.removeItem(`auth_user_${role}`);
+                  setAuthToken(null);
+                  setAuthUser(null);
+                  setRole('guest');
+                }}
+                className="text-emerald-400 hover:text-emerald-200"
+              >
+                Logout
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -195,7 +250,12 @@ export default function App() {
               flightInfo={flightInfo}
             />
           )}
-          {role === 'driver' && (
+          {role === 'driver' && !authToken && (
+            <div className="text-center py-12">
+              <p className="text-slate-400">Please login to access driver panel</p>
+            </div>
+          )}
+          {role === 'driver' && authToken && (
             <DriverPanel
               driverLoc={driverLoc}
               requests={requests}
@@ -204,11 +264,17 @@ export default function App() {
               etas={etas}
             />
           )}
-          {role === 'admin' && (
+          {role === 'admin' && !authToken && (
+            <div className="text-center py-12">
+              <p className="text-slate-400">Please login to access admin panel</p>
+            </div>
+          )}
+          {role === 'admin' && authToken && (
             <AdminPanel
               grouped={grouped}
               driverLoc={driverLoc}
               requests={requests}
+              statusMap={statusMap}
               logs={logs}
               etas={etas}
             />
@@ -220,31 +286,81 @@ export default function App() {
           onDismiss={() => setNotifications([])}
         />
       )}
+      
+      {/* Login Modal for Driver/Admin */}
+      {showLogin && (role === 'driver' || role === 'admin') && (
+        <LoginModal
+          role={role}
+          theme={theme}
+          onLogin={(token, user) => {
+            setAuthToken(token);
+            setAuthUser(user);
+            setShowLogin(false);
+            setPendingRole(null);
+          }}
+          onCancel={() => {
+            setShowLogin(false);
+            setPendingRole(null);
+            // Go back to guest if login cancelled
+            setRole('guest');
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function RoleSwitcher({ role, setRole }) {
+function RoleSwitcher({ role, setRole, authToken, authUser, setShowLogin, setPendingRole }) {
+  const handleRoleChange = (newRole) => {
+    if (newRole === 'guest') {
+      // Logout if switching from driver/admin
+      if (role === 'driver' || role === 'admin') {
+        localStorage.removeItem(`auth_token_${role}`);
+        localStorage.removeItem(`auth_user_${role}`);
+      }
+      setRole('guest');
+      setShowLogin(false);
+      setPendingRole(null);
+      return;
+    }
+
+    // For driver/admin, check if already authenticated
+    if (newRole === role && authToken) {
+      // Already logged in to this role
+      return;
+    }
+
+    // Check if token exists for this role
+    const storedToken = localStorage.getItem(`auth_token_${newRole}`);
+    const storedUser = localStorage.getItem(`auth_user_${newRole}`);
+
+    if (storedToken && storedUser) {
+      // Already authenticated, switch role
+      setRole(newRole);
+      setShowLogin(false);
+      setPendingRole(null);
+    } else {
+      // Need to login - set role first, then show login
+      setPendingRole(newRole);
+      setRole(newRole); // Set role first so useEffect triggers login modal
+      setShowLogin(true);
+    }
+  };
+
   return (
     <div className="flex gap-1 bg-slate-800 rounded-full p-1">
       {roles.map((r) => (
         <button
           key={r}
-          onClick={() => {
-            if (r === 'guest') return setRole(r);
-            const pin = r === 'driver' ? driverPin : adminPin;
-            const input = window.prompt(`Enter ${r} access code`);
-            if (input === pin) {
-              setRole(r);
-            } else {
-              alert('Invalid access code');
-            }
-          }}
+          onClick={() => handleRoleChange(r)}
           className={`px-3 py-1 rounded-full text-sm transition ${
             role === r ? 'bg-indigo-500 text-white shadow' : 'text-slate-300 hover:text-white'
           }`}
         >
           {r.toUpperCase()}
+          {(r === 'driver' || r === 'admin') && r === role && authToken && (
+            <span className="ml-1">✓</span>
+          )}
         </button>
       ))}
     </div>
@@ -1168,8 +1284,18 @@ function DriverPanel({ driverLoc, requests, statusMap, logs, etas }) {
   );
 }
 
-function AdminPanel({ grouped, driverLoc, requests, logs, etas }) {
-  const groups = useMemo(() => grouped || [], [grouped]);
+function AdminPanel({ grouped, driverLoc, requests, statusMap, logs, etas }) {
+  const groups = useMemo(() => {
+    if (!grouped || grouped.length === 0) return [];
+    // Update status in grouped requests from statusMap
+    return grouped.map(g => ({
+      ...g,
+      requests: g.requests.map(r => ({
+        ...r,
+        status: statusMap[r.id] || r.status || 'pending'
+      }))
+    }));
+  }, [grouped, statusMap]);
 
   const exportCSV = async () => {
     try {
@@ -1303,6 +1429,26 @@ function AdminPanel({ grouped, driverLoc, requests, logs, etas }) {
                             </span>
                       </div>
                     )}
+                        {/* Admin Status Update Control */}
+                        <div className="pt-2 border-t border-slate-700">
+                          <div className="text-xs text-slate-400 font-semibold mb-1.5 flex items-center gap-1.5">
+                            <img src="/checklist.gif" alt="" className="w-3.5 h-3.5" />
+                            <span>Update Status</span>
+                          </div>
+                          <Select
+                            icon="/checklist.gif"
+                            value={r.status || 'pending'}
+                            onChange={(v) => {
+                              socket.emit('status_change', { request_id: r.id, status: v });
+                              if (v === 'accepted') {
+                                socket.emit('request_eta', { request_id: r.id });
+                              }
+                            }}
+                            options={['pending', 'accepted', 'picked_up', 'completed', 'cancelled']}
+                            placeholder="Select status"
+                            required={false}
+                          />
+                        </div>
                       </div>
                 ))}
                   </div>

@@ -73,6 +73,10 @@ const isProduction = process.env.NODE_ENV === 'production';
 const parsedOrigins = (process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
 const corsOrigins = parsedOrigins.length ? parsedOrigins : (isProduction ? [] : '*');
 
+// Store io instance and activeRequests for webhook handlers (set after initSockets)
+let ioInstanceGlobal = null;
+let activeRequestsGlobal = null;
+
 const app = express();
 
 // Security Headers with Helmet
@@ -157,6 +161,79 @@ app.get('/health', async (_req, res) => {
   }
 });
 
+// FlightStats Alert Webhook Endpoint
+// This endpoint receives flight alert callbacks from FlightStats/Cirium
+app.post('/api/webhooks/flight-alerts', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    // Verify request is from FlightStats (optional but recommended)
+    // You can verify the Cirium-Flex-Alert-Hash header using your appKey
+    
+    const alert = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    
+    if (!alert || !alert.event || !alert.flightStatus) {
+      console.warn('Invalid alert payload received');
+      return res.status(400).json({ error: 'Invalid alert payload' });
+    }
+
+    // Extract request ID and phone from alert metadata (stored in name/value pairs)
+    const requestId = alert._requestId || alert.requestId;
+    const phone = alert._phone || alert.phone;
+
+    if (!requestId || !phone) {
+      console.warn('Alert received without requestId or phone:', alert);
+      return res.status(200).json({ received: true }); // Return 200 to acknowledge
+    }
+
+    // Dynamically import to avoid circular dependencies
+    const { formatFlightAlertMessage } = await import('./services/flightAlerts.js');
+    const { sendSMS } = await import('./services/sms.js');
+    
+    // Format alert message
+    const message = formatFlightAlertMessage(alert);
+    console.log('Flight alert received:', {
+      requestId,
+      eventType: alert.event?.type,
+      flight: `${alert.flightStatus?.carrierFsCode}${alert.flightStatus?.flightNumber}`
+    });
+
+    // Send SMS to guest
+    if (phone) {
+      try {
+        await sendSMS(phone, message);
+        console.log('Flight alert SMS sent to', phone);
+      } catch (err) {
+        console.error('Failed to send flight alert SMS:', err);
+      }
+    }
+
+    // Send push notification via Socket.IO if request is active
+    if (ioInstanceGlobal && activeRequestsGlobal) {
+      const request = activeRequestsGlobal.get(requestId);
+      
+      if (request) {
+        ioInstanceGlobal.to(`request_${requestId}`).emit('push_notification', {
+          type: 'flight_alert',
+          message: message,
+          request_id: requestId,
+          flight_info: {
+            carrier: alert.flightStatus?.carrierFsCode,
+            flightNumber: alert.flightStatus?.flightNumber,
+            eventType: alert.event?.type
+          },
+          ts: new Date().toISOString()
+        });
+      }
+    }
+
+    // Always return 200 to acknowledge receipt
+    res.status(200).json({ received: true, processed: true });
+  } catch (err) {
+    console.error('Error processing flight alert webhook:', err);
+    // Return 200 anyway to prevent FlightStats from retrying
+    res.status(200).json({ received: true, error: err.message });
+  }
+});
+
 // CSV Export with rate limiting and admin authentication
 app.get('/api/export/csv', apiLimiter, async (req, res) => {
   try {
@@ -215,6 +292,9 @@ const io = new Server(server, {
   allowEIO3: true // Allow older Socket.IO clients
 });
 
+// Store io instance for webhook handlers
+ioInstanceGlobal = io;
+
 // Error handling for server
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
@@ -261,7 +341,13 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-initSockets(io);
+// Initialize sockets and store references for webhook handlers
+initSockets(io).then(({ activeRequests }) => {
+  activeRequestsGlobal = activeRequests;
+  ioInstanceGlobal = io;
+}).catch(err => {
+  console.error('Error initializing sockets:', err);
+});
 
 connectRedis().catch((err) => {
   console.warn('⚠️  Redis connect failed (continuing without Redis):', err.message);

@@ -6,6 +6,7 @@ import { groupNearby } from '../services/grouping.js';
 import { calculateETA } from '../services/eta.js';
 import { getFlightInfo } from '../services/flightApi.js';
 import { sendSMS } from '../services/sms.js';
+import { createFlightAlertRule, parseFlightCode, deleteFlightAlertRule } from '../services/flightAlerts.js';
 
 const emptyToUndefined = (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 const optionalShortString = (min = 1, max = 50) =>
@@ -21,7 +22,20 @@ const joinRequestSchema = z.object({
   courtesy_pickup: z.boolean().default(false),
   language_pref: optionalShortString(2, 5),
   passenger_count: z.number().int().min(1).max(20).default(1),
-  selected_seats: z.array(z.string()).default([]),
+  selected_seats: z.preprocess(
+    (val) => {
+      // Normalize selected_seats to always be an array
+      if (Array.isArray(val)) {
+        return val;
+      }
+      if (val && typeof val === 'object') {
+        // Convert object to array (handles cases where Socket.IO transforms array to object)
+        return Object.values(val).filter(v => typeof v === 'string');
+      }
+      return [];
+    },
+    z.array(z.string()).default([])
+  ),
   coordinates: z.object({ lat: z.number(), lng: z.number() })
 });
 
@@ -68,11 +82,26 @@ function sanitizeInput(input) {
   return input;
 }
 
+// Export functions to access socket state from other modules (e.g., webhook handlers)
+let ioInstance = null;
+let activeRequestsMap = null;
+
+export function getIoInstance() {
+  return ioInstance;
+}
+
+export function getActiveRequests() {
+  return activeRequestsMap;
+}
+
 export function initSockets(io) {
+  ioInstance = io;
   let driverLocation = null;
   const activeRequests = new Map(); // request_id -> request payload
+  activeRequestsMap = activeRequests; // Export reference for webhook handlers
   const etas = new Map(); // request_id -> { etaMinutes, distanceKm, lastUpdated }
   const bookedSeats = new Map(); // seat_id -> request_id (when driver accepts, seats get booked)
+  const flightAlertRules = new Map(); // request_id -> alert_rule_id (for cleanup)
   const mapsApiKey = process.env.MAPTILER_KEY || process.env.MAPS_API_KEY || process.env.VITE_MAPTILER_KEY;
   const flightApiKey = process.env.FLIGHT_API_KEY;
 
@@ -127,7 +156,7 @@ export function initSockets(io) {
       // Sanitize input to prevent XSS
       const sanitizedPayload = sanitizeInput(payload);
       
-      // Validate with Zod schema
+      // Validate with Zod schema (selected_seats normalization is handled by z.preprocess)
       const parse = joinRequestSchema.safeParse(sanitizedPayload);
       if (!parse.success) {
         console.warn(`Invalid request from socket ${socket.id}:`, parse.error.issues);
@@ -182,6 +211,51 @@ export function initSockets(io) {
 
       activeRequests.set(request.id, request);
       socket.join(`request_${request.id}`); // Join request-specific room for chat/updates
+      
+      // Create FlightStats alert rule if flight code is provided
+      if (parse.data.airline_code) {
+        const flightInfo = parseFlightCode(parse.data.airline_code);
+        if (flightInfo) {
+          // Get webhook URL (should be your public server URL)
+          const webhookBaseUrl = process.env.WEBHOOK_BASE_URL || process.env.PUBLIC_URL || 'https://your-server.com';
+          const callbackUrl = `${webhookBaseUrl}/api/webhooks/flight-alerts`;
+          
+          // Parse flight date from current date (or you can ask guests for flight date)
+          const now = new Date();
+          const year = now.getFullYear().toString();
+          const month = String(now.getMonth() + 1).padStart(2, '0');
+          const day = String(now.getDate()).padStart(2, '0');
+          
+          // For DFW airport (hotel location), we need departure airport
+          // This is a limitation - FlightStats requires both airports
+          // You may need to ask guests for their departure airport, or use a default
+          const departureAirport = 'JFK'; // Default or ask user - you'll need to add this to the form
+          const arrivalAirport = 'DFW'; // Dallas/Fort Worth (hotel location)
+          
+          createFlightAlertRule({
+            carrier: flightInfo.carrier,
+            flightNumber: flightInfo.flightNumber,
+            departureAirport: departureAirport,
+            arrivalAirport: arrivalAirport,
+            year: year,
+            month: month,
+            day: day,
+            callbackUrl: callbackUrl,
+            events: ['depDelay', 'can', 'arrGate', 'preArr60', 'arr'], // Monitor delays, cancellations, gate changes, pre-arrival, arrival
+            requestId: request.id,
+            phone: request.phone
+          }).then(result => {
+            if (result.success && result.ruleId) {
+              flightAlertRules.set(request.id, result.ruleId);
+              console.log(`Flight alert rule created for request ${request.id}:`, result.ruleId);
+            } else {
+              console.warn(`Failed to create flight alert rule for request ${request.id}:`, result.error);
+            }
+          }).catch(err => {
+            console.error('Error creating flight alert rule:', err);
+          });
+        }
+      }
       
       // Broadcast new request with seat info
       io.emit('new_ride_request', request);
@@ -384,19 +458,37 @@ export function initSockets(io) {
 
         // Send push notifications on status changes
         if (parse.data.status === 'accepted') {
+          const notificationMsg = '✅ Your ride request has been accepted! Driver is on the way. Your seats are confirmed.';
           io.to(`request_${parse.data.request_id}`).emit('push_notification', {
             type: 'accepted',
-            message: '✅ Your ride request has been accepted! Driver is on the way. Your seats are confirmed.',
+            message: notificationMsg,
             request_id: parse.data.request_id,
             ts: new Date().toISOString()
           });
+          // Send SMS notification
+          if (req.phone) {
+            try {
+              await sendSMS(req.phone, notificationMsg);
+            } catch (err) {
+              console.error('SMS send error for accepted status:', req.phone, err);
+            }
+          }
         } else if (parse.data.status === 'picked_up') {
+          const notificationMsg = '🎉 You\'ve been picked up! Enjoy your ride.';
           io.to(`request_${parse.data.request_id}`).emit('push_notification', {
             type: 'picked_up',
-            message: '🎉 You\'ve been picked up! Enjoy your ride.',
+            message: notificationMsg,
             request_id: parse.data.request_id,
             ts: new Date().toISOString()
           });
+          // Send SMS notification
+          if (req.phone) {
+            try {
+              await sendSMS(req.phone, notificationMsg);
+            } catch (err) {
+              console.error('SMS send error for picked_up status:', req.phone, err);
+            }
+          }
         }
       }
 
@@ -458,10 +550,21 @@ export function initSockets(io) {
       // Clean up: remove requests if guest disconnects
       for (const [reqId, req] of activeRequests.entries()) {
         if (req.socket_id === socket.id && req.status === 'pending') {
+          // Clean up flight alert rule if exists
+          const alertRuleId = flightAlertRules.get(reqId);
+          if (alertRuleId) {
+            deleteFlightAlertRule(alertRuleId).catch(err => 
+              console.error('Failed to delete flight alert rule:', err)
+            );
+            flightAlertRules.delete(reqId);
+          }
           activeRequests.delete(reqId);
           io.emit('grouped_requests', groupNearby([...activeRequests.values()]));
         }
       }
     });
   });
+
+  // Return activeRequests reference for webhook handlers
+  return Promise.resolve({ activeRequests });
 }

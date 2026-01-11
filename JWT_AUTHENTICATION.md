@@ -44,19 +44,69 @@ Add to your `.env` file:
 
 ```env
 # JWT Authentication
+# Generate a secure secret using: node scripts/generate-jwt-secret.js
+# Or use: openssl rand -hex 32
 JWT_SECRET=your-super-secret-jwt-key-change-in-production
 JWT_EXPIRES_IN=24h
 
-# Driver Credentials (default: driver/driver123)
-DRIVER_USERNAME=driver
-DRIVER_PASSWORD=driver123
-# For production, use hashed password: DRIVER_PASSWORD_HASH=$2a$10$... (use bcrypt)
+## Generating JWT Secret
 
-# Admin Credentials (default: admin/admin123)
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=admin123
-# For production, use hashed password: ADMIN_PASSWORD_HASH=$2a$10$... (use bcrypt)
+The JWT secret is a random string that you generate yourself. It's used to sign and verify JWT tokens. Here are several ways to generate a secure JWT secret:
+
+### Method 1: Using the included script (Recommended)
+
+```bash
+cd backend
+node scripts/generate-jwt-secret.js
 ```
+
+This will generate a secure 64-character hexadecimal secret.
+
+### Method 2: Using OpenSSL (Command line)
+
+```bash
+openssl rand -hex 32
+# or for longer secret
+openssl rand -hex 64
+```
+
+### Method 3: Using Node.js directly
+
+```bash
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+```
+
+### Method 4: Using Online Generators (Not recommended for production)
+
+- Visit: https://generate-secret.vercel.app/64
+- Or: https://www.random.org/strings/
+
+**⚠️ Warning**: Don't use online generators for production secrets as they could be intercepted.
+
+### What Makes a Good JWT Secret?
+
+- **Length**: At least 32-64 characters (longer is better)
+- **Randomness**: Use cryptographically secure random generation
+- **Uniqueness**: Each environment (dev/staging/prod) should have a different secret
+- **Secrecy**: Never commit secrets to version control (use `.env` files in `.gitignore`)
+
+### Best Practices
+
+1. **Never share secrets**: Don't commit JWT secrets to Git
+2. **Use different secrets**: Dev, staging, and production should have different secrets
+3. **Rotate regularly**: Change secrets periodically (every 6-12 months)
+4. **Use environment variables**: Always store secrets in `.env` files, never in code
+5. **Keep backups**: Store production secrets securely (password manager, secrets manager)
+
+### Setting Up Your JWT Secret
+
+1. Generate a secret using one of the methods above
+2. Copy the generated secret
+3. Add it to your `.env` file:
+   ```env
+   JWT_SECRET=your-generated-secret-here
+   ```
+4. Restart your server to apply the changes
 
 ## Frontend Changes
 

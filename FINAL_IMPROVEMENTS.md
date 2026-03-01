@@ -5,7 +5,7 @@
 ### 1. **React ChatBotify Integration** ✅
 - **Library:** `react-chatbotify` installed and integrated
 - **Always Present:** Chatbot button always visible in bottom-right corner
-- **Features:**
+- ** ard new Features:** 
   - Welcome message on load
   - Interactive menu with options
   - Status checking
